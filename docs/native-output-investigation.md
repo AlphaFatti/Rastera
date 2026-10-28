@@ -4,6 +4,8 @@ October 28, 2026 · experiment branch `experiment/native-output-presenter`.
 
 **The control continued reporting native output presentations while the eframe operator's UI callbacks paused.** During each of six native operator transitions, the operator callback gap was 552–575 ms and Metal reported 33–34 valid output presentations within that gap. The largest gap between valid presentation timestamps in the scored native-transition trial was **41.667 ms**, versus approximately **600 ms callback gaps** in the framework/full-app release baselines. Shorter pacing disturbances and zero timestamps remain; this is not a perfect-cadence claim.
 
+**Confirmed remaining visual failure:** minimizing `Rastera — Native Output` briefly freezes the still-visible yellow-circle Metal controls (`Rastera`), including their displayed timestamps. The A/B/C animation-settings follow-up below reproduces this failure under all three conditions.
+
 This is an isolated presentation control, **not Rastera shared-canvas integration or an integrated-output fix**. Metal's timestamps are not physical scanout verification. First-canvas milestone acceptance remains pending.
 
 ## Checkpoint and preserved baseline
@@ -237,3 +239,104 @@ Reproduce the timestamped direction with:
 python3 tools/native_output_probe.py native native --target=picture --capture \
   --cycles=1 --out=/tmp/rastera-content/picture-timestamps.log
 ```
+
+## Controlled animation-settings comparison
+
+### Checkpoint, constants and settings restoration
+
+Before changing the experiment, all existing native code, content instrumentation, timestamp captures and unresolved visual failure were committed and pushed as [`beeaec74adb7c853a3f75a650d55d33224f9fafa`](https://github.com/AlphaFatti/Rastera/commit/beeaec74adb7c853a3f75a650d55d33224f9fafa) on [`experiment/native-output-presenter`](https://github.com/AlphaFatti/Rastera/tree/experiment/native-output-presenter). This is a WIP checkpoint, not milestone acceptance. The animation experiment remains separate review changes after that checkpoint.
+
+A single new release build was used for **all six runs**, SHA-256 `4cfb08a8351becd82d6f861c54481e9bac34d0f83951390d6ec2c2643dae394c` (unchanged before/after validation). Same Apple M1 Pro, macOS 15.5, Rust 1.99.1, eframe 0.31.1, wgpu 24.0.5, FIFO controls renderer, dedicated native Metal thread/queue, shader, work-in-flight bound and window layout. No dependency, renderer, rendering-thread, clock, App Nap setting or process activity assertion changes were made. Normal OS power-management behavior was left in place; it was not independently profiled. Runs were serial, in A-idle/A-cycles/B-idle/B-cycles/C-idle/C-cycles order. Each idle interval lasted 12 s; each cycles run performed three minimize/restore cycles with three-second **confirmed-state** holds.
+
+| Condition | Native picture animationBehavior | Reduce Motion | Actual startup read-back |
+| --- | --- | --- | --- |
+| A | Default, property left untouched | Off | `requested=default readback=0 reduce_motion=0 main_thread=1` |
+| B | `.none` on `Rastera — Native Output` only | Off | `requested=none readback=2 reduce_motion=0 main_thread=1` |
+| C | Default, property left untouched | On | `requested=default readback=0 reduce_motion=1 main_thread=1` |
+
+Temporary diagnostic option: `--window-animation=default|none`; default is unchanged AppKit behavior. The property is set and read on main before showing the native picture window, and logged with `NSWorkspace.accessibilityDisplayShouldReduceMotion`. Invalid option values fail before creating windows. The controls window's animation behavior is not changed. Apple's [animationBehavior documentation](https://developer.apple.com/documentation/appkit/nswindow/animationbehavior-swift.property) and installed SDK 15.5 `NSWindow.h` describe automatic **orderFront/orderOut** animations; they do not promise to suppress Dock miniaturization. This experiment tests that distinction rather than assuming that `.none` disables the native minimize path.
+
+Original Reduce Motion was **off**: the normal **System Settings → Accessibility → Display → Reduce motion** checkbox returned `0` on this macOS 15.5 host. No preference files or `defaults` writes were used. After A/B, Accessibility clicked that same normal checkbox; read-back changed `0 → 1`, and both C app launches independently reported `reduce_motion=1`. A `finally` block restored the checkbox after C; read-back was `original=1 readback=0`. Thus the original **off** value is restored. No user intervention was needed. The current Apple Support UI may call the section [Motion](https://support.apple.com/guide/mac-help/customize-onscreen-motion-mchlc03f57a1/mac); the Display path here is the actual tested host UI.
+
+### Observed image content and callback activity
+
+Every minimize presses the picture window's native yellow `AXMinimizeButton`. Every restore uses its native `AXMinimized=false` Accessibility operation; the target state is polled and the separate controls window is checked unminimized. These are external native operations, not the egui command driver or order-out substitutes. All 18 requested transitions were confirmed and all six applications exited normally. Dock icon clicks and fresh human acceptance were not exercised by this automation.
+
+Only the still-visible **yellow-circle `Rastera` window** was captured. Identical hashes of the elapsed timestamp/UI counter/Unix-time region establish repeated captured image content; the native picture's presentation counts are not used as evidence that the controls image changed. Each idle run has zero repeated sampled timestamp regions. Each cycles run has **six** repeated regions associated with the six long controls callback gaps, then resumes changing while the picture stays minimized or after restoration.
+
+| Condition | Idle controls UI max gap | Cycles controls UI gaps (min–max) | Timestamp samples, idle / cycles | Repeated timestamp regions, idle / cycles | Screenshot hold lower bounds / upper bounds across six holds |
+| --- | ---: | ---: | ---: | ---: | --- |
+| A | 50.746 ms | 557.000–575.355 ms | 48 / 207 | 0 / 6 | 102–105 ms / 867–903 ms |
+| B | 53.249 ms | 554.549–605.489 ms | 47 / 206 | 0 / 6 | 105–355 ms / 865–1,189 ms |
+| C | 64.972 ms | 548.708–579.029 ms | 47 / 207 | 0 / 6 | 102–350 ms / 851–1,133 ms |
+
+Screenshot bounds are intentionally loose, **not exact freeze durations or a ranking of settings**. The driver records both capture-command start and return for each PNG. Actual acquisition is somewhere inside that bracket. For identical first/last images, the conservative lower bound is `last.start − first.end` (clamped to zero). Different neighboring timestamp images bound the whole hold above by `next.end − previous.start`. Raw request-start spans are also retained. Capture request spacing reached 302 ms in the cycles runs (380 ms in A idle); shorter pauses can fall between samples. Capture includes process launch/Window Server overhead and perturbs scheduling. The approximately 0.55–0.61 s numbers above are **CPU callback gaps**, separately measured from monotonic callback entry times. They are not inferred from screenshots or presentedTime.
+
+Representative identical-image pairs: [A first](evidence/animation-A-first.png) / [A last](evidence/animation-A-last.png), [B first](evidence/animation-B-first.png) / [B last](evidence/animation-B-last.png), [C first](evidence/animation-C-first.png) / [C last](evidence/animation-C-last.png). These preserve the longest acquisition-lower-bound pair in each condition, not a continuous video. A window-only capture can observe a surface differently from final desktop composition; no physical scanout verification is claimed.
+
+### Native rendering and presentation, measured separately
+
+The following measurements belong to the **picture window**, which is deliberately hidden for part of each cycles run. Its long whole-interval gaps must not be described as freezes of the visible controls. Positive `presentedTime` values are Apple-reported presentation evidence only. Zero timestamps, absent handlers and unknown outcomes remain in the accounting.
+
+| Trial | Native schedule max gap | Valid picture presentation max gap | Valid presentation samples in scored interval | Zero timestamp callbacks, scored / whole process | Missing handlers / committed (whole process) | Committed without valid presentation evidence (whole process) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| A idle | 35.470 ms | 41.667 ms | 645 | 50 / 61 | 4 / 1,136 | 65 |
+| A cycles | 7,584.231 ms | 7,716.692 ms | 1,534 | 146 / 157 | 1 / 2,119 | 158 |
+| B idle | 38.459 ms | 41.667 ms | 639 | 48 / 57 | 1 / 1,127 | 58 |
+| B cycles | 7,684.757 ms | 7,816.690 ms | 1,536 | 141 / 154 | 3 / 2,119 | 157 |
+| C idle | 50.024 ms | 58.333 ms | 610 | 69 / 81 | 4 / 1,128 | 85 |
+| C cycles | 7,750.982 ms | 7,883.356 ms | 1,507 | 167 / 179 | 2 / 2,115 | 181 |
+
+During **each** controls callback pause, the independent native path still delivered scheduling and command-completion callbacks: A 31–34 of each per gap, B 32–35, C 31–34. Valid native picture presentation samples within those same gaps numbered A 23–31, B 24–32, C 22–31. Surrounding valid-timestamp gaps were at most 33.334 ms (A), 41.667 ms (B/C). Zero-timestamp handler arrivals during individual controls pauses ranged from 4–6 (A), 4–8 (B), 4–7 (C); they are not positive presentation evidence. This separates stopped controls content generation from an application-wide GPU stop.
+
+Across all six processes: no unavailable/nonfinite timestamp counter increments, missing completions, missing present calls, content/drawable-link mismatches, GPU errors, lost telemetry or semaphore backpressure. Maximum GPU work in flight was 2 in B-cycles and 1 otherwise, within the unchanged bound of 2. Each shutdown reported a complete drain and zero in flight. Missing presentation handlers are the final 1–4 sequences at shutdown; the GPU drain does not guarantee their delivery. Those frames and all zero-timestamp outcomes remain unknown rather than silently counted as displayed. Raw missing/invalid sequence lists are retained in [animation-settings-results.json](animation-settings-results.json).
+
+### Where the image stops, and next measured fix candidate
+
+**Neither `.none` nor Reduce Motion improved the confirmed transition-freeze behavior in this experiment.** All six visible content holds and callback pauses remain under both alternatives. Small maximum differences are not statistically meaningful: one short trial per condition, fixed trial order, uncontrolled thermal/compositor load, and screenshot perturbation. Reduce Motion is not proposed as a required user workaround, and `.none` is not a verified minimize-animation fix.
+
+The first observable stop is the **main-thread controls update/paint path**. Its visible timestamp and UI frame identifier stop changing while callbacks are absent. The underlying `Instant` monotonic clock does not freeze: elapsed time jumps forward on the next update. The yellow-circle mesh and text are created in that update, so no new controls content is generated during the gap. The independent native renderer continues generating/completing work during the same gaps; no shared-canvas texture or UI-to-native uniform coupling exists in this diagnostic. This is not merely advancing presentation counters with a frozen native content ID, and no persistent GPU deadlock was demonstrated.
+
+A separate, non-comparison run sampled the same binary with default behavior and Reduce Motion restored off (`sample PID 10 1`). The main-thread call tree includes:
+
+```text
+NSAccessibilityEntryPointPerformAction → NSCell accessibilityPerformPress
+  → NSButtonCell performClick:
+    → NSWMWindowCoordinator ... windowMiniaturizationResponse:
+      → NSWindow _minimizeToDockBypassingWindowManager
+        → NSWindow _regularMinimizeToDock
+          → minimizeItems → waitForTransaction → CFRunLoopRunSpecific
+```
+
+`waitForTransaction` occurs in 473 sampled stacks beneath this minimize path; samples are **not exact duration measurements**. This supplies a specific AppKit miniaturization wait mechanism consistent with the UI callback/content pause. The same aggregate trace also spends much ordinary rendering time inside eframe/wgpu `CAMetalLayer.nextDrawable`; aggregate counts cannot assign all such waits to the transition, and this follow-up does not claim every pause has one exclusive cause. The sampled run had no screenshot capture, is outside A/B/C timing results, recovered, and exited normally. An excerpt and reproduction helper are preserved under `docs/evidence/animation-transition-stack.txt` and `tools/sample_native_transition.py`.
+
+The next focused fix candidate is to remove the continuously moving preview/picture pixels' dependence on the controls' main-thread update/presentation path, reusing the already independent native presenter approach in a small measured preview experiment while keeping AppKit lifecycle and editor controls on main. Its test must again minimize the native picture and prove that both clocked content and presentation advance on the still-visible surface. This is a candidate for the next task, **not an implemented fix or a reason to accept this milestone**. Pumping/re-entering eframe manually inside AppKit's nested wait or moving AppKit window operations to a worker is not justified by this evidence. Integration with Rastera's shared canvas still requires a measured cross-queue texture ownership/synchronization design.
+
+### Reproduction and checks
+
+```sh
+cargo build --release --locked -p rastera-native-output
+xcrun clang -fobjc-arc -framework Foundation -framework CoreGraphics \
+  tools/native_window_info.m -o /tmp/rastera-window-info
+open 'x-apple.systempreferences:com.apple.Accessibility-Settings.extension?Display'
+osascript tools/reduce_motion.applescript read  # Record original; tested value was 0.
+
+# A: Reduce Motion off. B: repeat both commands with --window-animation=none.
+python3 tools/native_output_probe.py native idle --target=picture --capture \
+  --window-animation=default --seconds=12 --out=/tmp/rastera-animation/A-idle.log
+python3 tools/native_output_probe.py native native --target=picture --capture \
+  --window-animation=default --cycles=3 --out=/tmp/rastera-animation/A-cycles.log
+
+# C: use the normal settings checkbox, then repeat A's commands with C filenames.
+osascript tools/reduce_motion.applescript on
+# Restore the originally recorded checkbox value after C, including on failure:
+osascript tools/reduce_motion.applescript off  # This host's original value only.
+
+python3 tools/summarize_native_output.py /tmp/rastera-animation
+python3 tools/summarize_animation_captures.py /tmp/rastera-animation/A-cycles.frames
+# Repeat capture analysis for each of the six *.frames directories.
+```
+
+For manual retest: `cargo run --release --locked -p rastera-native-output --bin native-output-control -- --window-animation=none` (or `default`). Minimize **`Rastera — Native Output`** and observe **`Rastera`**, then restore and repeat. The setting helper expects this host's English macOS 15.5 Display pane; if it is unavailable, use **System Settings → Accessibility → Display → Reduce motion** manually and restore the recorded original value. Do not change unrelated settings. The experiment's automated C runner used a `finally` block for restoration, and its read-back is preserved in the results JSON.
+
+Passed after code changes: `cargo fmt --all -- --check`, `cargo check --workspace --locked --offline`, `cargo test --workspace --locked --offline` (four Rust tests), `cargo clippy --workspace --all-targets --locked --offline -- -D warnings`, native release compilation with Objective-C++ warnings denied, and seven Python analysis tests. New measurement tests check acquisition brackets, different-neighbor upper bounds and no fabricated hold from a single sample. Existing transitive `block` future-compatibility warning remains. Source/toolchain/dependency baselines are preserved. Raw logs, capture timing JSONL and app-only PNGs are temporary under `/tmp/rastera-animation`; derived records and representative evidence are in the repository. General continuity, integrated-output correctness and first-canvas acceptance remain pending human visual verification.

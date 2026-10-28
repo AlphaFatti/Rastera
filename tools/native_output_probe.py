@@ -17,6 +17,7 @@ def main():
     parser.add_argument("mode", choices=["idle", "native", "egui", "lifecycle", "close-operator"])
     parser.add_argument("--target", choices=["operator", "picture"], default="operator")
     parser.add_argument("--capture", action="store_true", help="Capture only the other app window; requires Screen Recording and /tmp/rastera-window-info")
+    parser.add_argument("--window-animation", choices=["default", "none"], default="default")
     parser.add_argument("--profile", choices=["debug", "release"], default="release")
     parser.add_argument("--cycles", type=int, default=3)
     parser.add_argument("--seconds", type=int, default=12)
@@ -27,14 +28,16 @@ def main():
     binary = {"framework": "framework-control", "full": "rastera-desktop", "native": "native-output-control"}[args.app]
     outputs = ["Rastera — Native Output"] if args.app == "native" else ["Rastera — Left", "Rastera — Right"]
     command = [str(Path("target", args.profile, binary).resolve())]
+    if args.app == "native":
+        command += ["--window-animation="+args.window_animation]
     if args.app == "full":
         command += ["--outputs", "--diagnostics"]
     if args.mode == "egui":
         command += ["--minimize-test=operator"]
-    if args.capture and (args.app != "native" or args.mode != "native"):
-        parser.error("capture requires native native")
-    if args.target == "picture" and (args.app != "native" or args.mode != "native"):
-        parser.error("picture target requires native native")
+    if args.capture and (args.app != "native" or args.mode not in ["native", "idle"]):
+        parser.error("capture requires native native or native idle")
+    if args.target == "picture" and (args.app != "native" or args.mode not in ["native", "idle"]):
+        parser.error("picture target requires native native or native idle")
     origin = time.monotonic_ns()
     origin_unix = time.time_ns()
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -92,10 +95,15 @@ return {{(value of attribute "AXMinimized" of targetWindow), {checks}}}''')
                 capture_dir = args.out.with_suffix(".frames")
                 capture_dir.mkdir(exist_ok=True)
                 def capture():
+                    timing = capture_dir / "timing.jsonl"
                     while not capture_stop.is_set():
                         started = time.monotonic_ns()-origin
                         dest = capture_dir/f"{started//1000:012d}.png"
                         result = subprocess.run(["/usr/sbin/screencapture", "-x", "-o", "-l", str(window_id), str(dest)], capture_output=True)
+                        ended = time.monotonic_ns()-origin
+                        with timing.open("a") as capture_timing:
+                            capture_timing.write(json.dumps(dict(file=dest.name, start_us=started//1000,
+                                                                 end_us=ended//1000, returncode=result.returncode))+"\n")
                         if result.returncode:
                             (capture_dir/"error.txt").write_bytes(result.stderr)
                             break

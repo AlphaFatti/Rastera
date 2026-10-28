@@ -8,7 +8,7 @@ use std::{
 };
 unsafe extern "C" {
     fn rastera_native_log(line: *const std::ffi::c_char);
-    fn rastera_native_create(stats: *mut *mut c_void) -> *mut c_void;
+    fn rastera_native_create(stats: *mut *mut c_void, disable_animations: bool) -> *mut c_void;
     fn rastera_native_destroy(handle: *mut c_void);
     fn rastera_native_is_open(handle: *mut c_void) -> bool;
     fn rastera_native_report(stats: *mut c_void);
@@ -24,10 +24,10 @@ pub struct NativeStats(NonNull<c_void>);
 unsafe impl Send for NativeStats {}
 impl NativeOutput {
     /// Called from the main-thread eframe creation callback only.
-    pub fn new() -> io::Result<(Self, NativeStats)> {
+    pub fn new(disable_animations: bool) -> io::Result<(Self, NativeStats)> {
         let mut stats = std::ptr::null_mut();
         // SAFETY: out pointer is valid; native API creates an owned main-thread object.
-        let handle = unsafe { rastera_native_create(&mut stats) };
+        let handle = unsafe { rastera_native_create(&mut stats, disable_animations) };
         let output = Self {
             handle: NonNull::new(handle).ok_or_else(|| {
                 io::Error::other("native Metal output initialization failed; requires macOS 14+")

@@ -1,0 +1,58 @@
+Separate reproduction: default animation behavior, Reduce Motion off.
+Not an A/B/C timing run; sample counts are not exact durations.
+
+Analysis of sampling native-output-control (pid 98916) every 1 millisecond
+Process:         native-output-control [98916]
+Path:            /Users/USER/Documents/*/native-output-control
+Load Address:    0x104cdc000
+Identifier:      native-output-control
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [98915]
+Target Type:     live task
+
+Date/Time:       2026-10-28 14:40:20.012 -0400
+Launch Time:     2026-10-28 14:40:16.504 -0400
+OS Version:      macOS 15.5 (24F74)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+
+Physical footprint:         88.3M
+
+    + 8532 start  (in dyld) + 6076  [0x182bfeb98]
+...
+    +                         !       : | +       485 _XPerformAction  (in HIServices) + 340  [0x189e33c50]
+    +                         !       : | +       ! 485 _AXXMIGPerformAction  (in HIServices) + 432  [0x189e1478c]
+    +                         !       : | +       !   485 PerformAction  (in AppKit) + 200  [0x187515930]
+    +                         !       : | +       !     485 NSAccessibilityEntryPointPerformAction  (in AppKit) + 220  [0x1877b6a68]
+    +                         !       : | +       !       485 NSAccessibilityPerformEntryPointBOOL  (in AppKit) + 44  [0x1877b5030]
+    +                         !       : | +       !         485 ___NSAccessibilityEntryPointPerformAction_block_invoke.805  (in AppKit) + 304  [0x1877b9374]
+    +                         !       : | +       !           485 -[NSCell accessibilityPerformPress]  (in AppKit) + 28  [0x1875e21d8]
+    +                         !       : | +       !             485 -[_NSThemeWidgetCell(_NSThemeWidgetCellAccessibility) accessibilityPerformAction:]  (in AppKit) + 124  [0x187a4638c]
+    +                         !       : | +       !               485 -[NSButtonCell performClick:]  (in AppKit) + 748  [0x187243fb8]
+    +                         !       : | +       !                 485 -[NSApplication(NSEventRouting) _nextEventMatchingEventMask:untilDate:inMode:dequeue:]  (in AppKit) + 688  [0x18794e5b0]
+    +                         !       : | +       !                   485 _DPSNextEvent  (in AppKit) + 684  [0x186fafab4]
+    +                         !       : | +       !                     485 _BlockUntilNextEventMatchingListInModeWithFilter  (in HIToolbox) + 76  [0x18ecaa484]
+    +                         !       : | +       !                       484 ReceiveNextEventCommon  (in HIToolbox) + 676  [0x18eb1f4e8]
+    +                         !       : | +       !                       : 484 RunCurrentEventLoopInMode  (in HIToolbox) + 324  [0x18eb1c27c]
+    +                         !       : | +       !                       :   484 CFRunLoopRunSpecific  (in CoreFoundation) + 572  [0x183087c58]
+    +                         !       : | +       !                       :     479 __CFRunLoopRun  (in CoreFoundation) + 2384  [0x183088c30]
+    +                         !       : | +       !                       :     | 479 __CFRunLoopDoBlocks  (in CoreFoundation) + 352  [0x183089784]
+    +                         !       : | +       !                       :     |   479 __CFRUNLOOP_IS_CALLING_OUT_TO_A_BLOCK__  (in CoreFoundation) + 28  [0x183089874]
+    +                         !       : | +       !                       :     |     479 ___NSMainRunLoopPerformBlockInModes_block_invoke  (in AppKit) + 44  [0x187cd0a00]
+    +                         !       : | +       !                       :     |       479 __75-[NSWMWindowCoordinator clientWindowManager:windowMiniaturizationResponse:]_block_invoke  (in AppKit) + 432  [0x187ccfc48]
+    +                         !       : | +       !                       :     |         478 -[NSWindow(NSWindow_Theme) _minimizeToDockBypassingWindowManager]  (in AppKit) + 36  [0x187afad58]
+    +                         !       : | +       !                       :     |         + 478 -[NSWindow(NSWindow_Theme) _regularMinimizeToDock]  (in AppKit) + 60  [0x187afad18]
+    +                         !       : | +       !                       :     |         +   473 minimizeItems  (in AppKit) + 120  [0x187af196c]
+    +                         !       : | +       !                       :     |         +   ! 473 waitForTransaction  (in HIServices) + 220  [0x189e01c20]
+    +                         !       : | +       !                       :     |         +   !   473 CFRunLoopRunSpecific  (in CoreFoundation) + 572  [0x183087c58]
+    +                         !       : | +       !                       :     |         +   !     473 __CFRunLoopRun  (in CoreFoundation) + 1208  [0x183088798]
+    +                         !       : | +       !                       :     |         +   !       473 __CFRunLoopServiceMachPort  (in CoreFoundation) + 160  [0x183089e7c]
+    +                         !       : | +       !                       :     |         +   !         473 mach_msg  (in libsystem_kernel.dylib) + 24  [0x182f5cfa8]
+    +                         !       : | +       !                       :     |         +   !           473 mach_msg_overwrite  (in libsystem_kernel.dylib) + 484  [0x182f65764]
+    +                         !       : | +       !                       :     |         +   !             473 mach_msg2_internal  (in libsystem_kernel.dylib) + 76  [0x182f6f3a0]
+    +                         !       : | +       !                       :     |         +   !               473 mach_msg2_trap  (in libsystem_kernel.dylib) + 8  [0x182f5cc34]
+    +                         !       : | +       !                       :     |         +   5 minimizeItems  (in AppKit) + 84  [0x187af1948]
+    +                         !       : | +       !                       :     |         +     5 NSCGSTransactionSynchronize  (in AppKit) + 112  [0x1871c1768]
+    +                         !       : | +       !                       :     |         +       5 NSCGSTransactionWaitPreviousIfNeeded_  (in AppKit) + 32  [0x187cd4f50]

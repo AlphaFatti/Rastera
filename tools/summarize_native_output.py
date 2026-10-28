@@ -92,6 +92,9 @@ def summarize(path):
         surrounding = [t for t in valid if start-0.1 <= t <= finish+0.1]
         result["operator_pauses"].append(dict(ui_start_us=int(r["max_gap_start_us"]), ui_gap_ms=int(r["max_gap_us"])/1000,
                                              presentation_samples_during_gap=sum(start <= t <= finish for t in valid),
+                                             native_schedule_callbacks_during_gap=sum(start <= float(e["callback_host_s"]) <= finish for e in records if e["kind"] == "schedule"),
+                                             native_completion_callbacks_during_gap=sum(start <= float(e["callback_host_s"]) <= finish for e in records if e["kind"] == "complete"),
+                                             zero_presentation_callbacks_during_gap=sum(start <= float(e["callback_host_s"]) <= finish and float(e["presented_host_s"]) == 0 for e in handlers),
                                              surrounding_presentation_gap_ms=ms(max_gap(surrounding))))
     result["content_accounting"] = content_accounting(rows)
     result["native_stop"] = [r for r in rows if r["record_type"] == "native_stop"]

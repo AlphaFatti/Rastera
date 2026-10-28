@@ -106,13 +106,13 @@ API_AVAILABLE(macos(14.0))
     std::chrono::steady_clock::time_point _animationOrigin;
     uint64_t _contentID;
 }
-- (BOOL)start;
+- (BOOL)start:(BOOL)disableAnimations;
 - (void)stop;
 - (BOOL)isOpen;
 @end
 
 @implementation RasteraNativePresenter
-- (BOOL)start {
+- (BOOL)start:(BOOL)disableAnimations {
     NSCAssert([NSThread isMainThread], @"Create native window on main thread");
     stats = std::make_shared<Stats>();
     _slots = dispatch_semaphore_create(2);
@@ -175,6 +175,10 @@ fragment float4 diagnostic_fragment(float4 p [[position]], constant Uniforms &da
         styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable
         backing:NSBackingStoreBuffered defer:NO];
     window.title = @"Rastera — Native Output";
+    if (disableAnimations) window.animationBehavior = NSWindowAnimationBehaviorNone;
+    std::fprintf(stderr,"animation_settings host_s=%.9f window=native_output requested=%s readback=%ld reduce_motion=%d main_thread=1\n",
+        CACurrentMediaTime(),disableAnimations?"none":"default",(long)window.animationBehavior,
+        NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion);
     window.releasedWhenClosed = NO;
     window.delegate = self;
     RasteraMetalView *view = [[RasteraMetalView alloc] initWithFrame:NSMakeRect(0,0,600,338)];
@@ -298,12 +302,12 @@ fragment float4 diagnostic_fragment(float4 p [[position]], constant Uniforms &da
 - (void)dealloc { NSCAssert(!_worker.joinable(),@"Explicit stop must precede deallocation"); }
 @end
 
-extern "C" void *rastera_native_create(void **statsOut) {
+extern "C" void *rastera_native_create(void **statsOut, bool disableAnimations) {
     NSCAssert([NSThread isMainThread],@"Main thread only");
     *statsOut = nullptr;
     if (@available(macOS 14.0,*)) {
         RasteraNativePresenter *presenter = [RasteraNativePresenter new];
-        if (![presenter start]) return nullptr;
+        if (![presenter start:disableAnimations]) return nullptr;
         *statsOut = new StatsHandle(presenter->stats);
         return (__bridge_retained void *)presenter;
     }

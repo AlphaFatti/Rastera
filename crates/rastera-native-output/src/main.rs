@@ -84,6 +84,21 @@ mod app {
         }
     }
     pub fn run() -> eframe::Result {
+        // Diagnostic only: change the native picture window's AppKit property.
+        let mut disable_animations = false;
+        for arg in std::env::args().skip(1) {
+            if let Some(value) = arg.strip_prefix("--window-animation=") {
+                disable_animations = match value {
+                    "default" => false,
+                    "none" => true,
+                    _ => {
+                        return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
+                            "--window-animation must be default or none",
+                        ))))
+                    }
+                };
+            }
+        }
         let options = eframe::NativeOptions {
             renderer: eframe::Renderer::Wgpu,
             viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 600.0]),
@@ -103,8 +118,8 @@ mod app {
         eframe::run_native(
             "Rastera",
             options,
-            Box::new(|cc| {
-                let (output, stats) = NativeOutput::new()?;
+            Box::new(move |cc| {
+                let (output, stats) = NativeOutput::new(disable_animations)?;
                 let origin = Instant::now();
                 log(format!(
                     "clock_anchor mono_us={} unix_us={}\n",
