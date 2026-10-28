@@ -1,0 +1,330 @@
+{
+  "profile": "release",
+  "checkpoint": "2a9238e9e26636e95e021301e2e3a86975e30d2c",
+  "host": "Apple M1 Pro / macOS 15.5",
+  "measurements": [
+    {
+      "case": "framework-egui",
+      "measured_seconds": 13.179,
+      "presentation_gap_ms": null,
+      "presentation_status": "not instrumented in baseline",
+      "ui_gap_ms": {
+        "left": 609.254,
+        "operator": 590.648,
+        "right": 602.481
+      }
+    },
+    {
+      "case": "framework-idle",
+      "measured_seconds": 12.005,
+      "presentation_gap_ms": null,
+      "presentation_status": "not instrumented in baseline",
+      "ui_gap_ms": {
+        "left": 17.033,
+        "operator": 17.246,
+        "right": 17.412
+      }
+    },
+    {
+      "case": "framework-native",
+      "measured_seconds": 44.025,
+      "presentation_gap_ms": null,
+      "presentation_status": "not instrumented in baseline",
+      "ui_gap_ms": {
+        "left": 600.125,
+        "operator": 581.369,
+        "right": 592.892
+      }
+    },
+    {
+      "case": "full-egui",
+      "measured_seconds": 13.148,
+      "presentation_gap_ms": null,
+      "presentation_status": "not instrumented in baseline",
+      "ui_gap_ms": {
+        "left": 592.333,
+        "operator": 585.598,
+        "right": 592.449
+      }
+    },
+    {
+      "case": "full-idle",
+      "measured_seconds": 12.002,
+      "presentation_gap_ms": null,
+      "presentation_status": "not instrumented in baseline",
+      "ui_gap_ms": {
+        "left": 28.108,
+        "operator": 28.299,
+        "right": 27.938
+      }
+    },
+    {
+      "case": "full-native",
+      "measured_seconds": 27.702,
+      "presentation_gap_ms": null,
+      "presentation_status": "not instrumented in baseline",
+      "ui_gap_ms": {
+        "left": 592.872,
+        "operator": 587.478,
+        "right": 593.313
+      }
+    },
+    {
+      "backpressure": 0,
+      "case": "native-close-operator",
+      "commit_max_us": 4041.208,
+      "complete_callback_gap_ms": 20.930875,
+      "errors": 0,
+      "gpu_completion_gap_ms": 22.355,
+      "lost_events": 0,
+      "max_inflight": 1,
+      "measured_seconds": 1.039,
+      "native_stop": [
+        {
+          "gpu_drain": "complete",
+          "host_s": "364118.399623833",
+          "inflight": "0",
+          "record_type": "native_stop"
+        }
+      ],
+      "operator_pauses": [],
+      "present_call_max_us": 4014.708,
+      "presentation_gap_ms": 25.000083,
+      "presentation_status": "Metal-reported timestamps; no physical scanout measurement",
+      "presented_callback_gap_ms": 25.105542,
+      "schedule_gap_ms": 23.053125,
+      "total_unavailable_timestamps": 0,
+      "total_zero_timestamps": 5,
+      "ui_gap_ms": {
+        "left": null,
+        "operator": 30.1,
+        "right": null
+      },
+      "valid_presentation_samples": 61,
+      "zero_timestamp_callbacks_in_interval": 0
+    },
+    {
+      "backpressure": 0,
+      "case": "native-egui",
+      "commit_max_us": 5215.75,
+      "complete_callback_gap_ms": 22.489417,
+      "errors": 0,
+      "gpu_completion_gap_ms": 22.48625,
+      "lost_events": 0,
+      "max_inflight": 1,
+      "measured_seconds": 13.249,
+      "native_stop": [
+        {
+          "gpu_drain": "complete",
+          "host_s": "364077.426498458",
+          "inflight": "0",
+          "record_type": "native_stop"
+        }
+      ],
+      "operator_pauses": [
+        {
+          "presentation_samples_during_gap": 34,
+          "surrounding_presentation_gap_ms": 16.666833,
+          "ui_gap_ms": 563.996,
+          "ui_start_us": 9064980
+        },
+        {
+          "presentation_samples_during_gap": 33,
+          "surrounding_presentation_gap_ms": 16.666833,
+          "ui_gap_ms": 550.787,
+          "ui_start_us": 12090543
+        },
+        {
+          "presentation_samples_during_gap": 34,
+          "surrounding_presentation_gap_ms": 16.666833,
+          "ui_gap_ms": 565.032,
+          "ui_start_us": 15114045
+        },
+        {
+          "presentation_samples_during_gap": 33,
+          "surrounding_presentation_gap_ms": 16.666833,
+          "ui_gap_ms": 557.461,
+          "ui_start_us": 18145287
+        }
+      ],
+      "present_call_max_us": 3054.958,
+      "presentation_gap_ms": 25.000125,
+      "presentation_status": "Metal-reported timestamps; no physical scanout measurement",
+      "presented_callback_gap_ms": 24.807792,
+      "schedule_gap_ms": 22.582792,
+      "total_unavailable_timestamps": 0,
+      "total_zero_timestamps": 6,
+      "ui_gap_ms": {
+        "left": null,
+        "operator": 565.032,
+        "right": null
+      },
+      "valid_presentation_samples": 793,
+      "zero_timestamp_callbacks_in_interval": 0
+    },
+    {
+      "backpressure": 0,
+      "case": "native-idle",
+      "commit_max_us": 6551.5,
+      "complete_callback_gap_ms": 22.127042,
+      "errors": 0,
+      "gpu_completion_gap_ms": 22.163917,
+      "lost_events": 0,
+      "max_inflight": 1,
+      "measured_seconds": 12.005,
+      "native_stop": [
+        {
+          "gpu_drain": "complete",
+          "host_s": "364014.808108125",
+          "inflight": "0",
+          "record_type": "native_stop"
+        }
+      ],
+      "operator_pauses": [],
+      "present_call_max_us": 2832.958,
+      "presentation_gap_ms": 25.000125,
+      "presentation_status": "Metal-reported timestamps; no physical scanout measurement",
+      "presented_callback_gap_ms": 25.035667,
+      "schedule_gap_ms": 23.016209,
+      "total_unavailable_timestamps": 0,
+      "total_zero_timestamps": 7,
+      "ui_gap_ms": {
+        "left": null,
+        "operator": 17.888,
+        "right": null
+      },
+      "valid_presentation_samples": 720,
+      "zero_timestamp_callbacks_in_interval": 0
+    },
+    {
+      "backpressure": 0,
+      "case": "native-lifecycle",
+      "commit_max_us": 5366.375,
+      "complete_callback_gap_ms": 3880.957041,
+      "errors": 0,
+      "gpu_completion_gap_ms": 3880.950125,
+      "lost_events": 0,
+      "max_inflight": 1,
+      "measured_seconds": 30.841,
+      "native_stop": [
+        {
+          "gpu_drain": "complete",
+          "host_s": "364108.913002917",
+          "inflight": "0",
+          "record_type": "native_stop"
+        }
+      ],
+      "operator_pauses": [
+        {
+          "presentation_samples_during_gap": 29,
+          "surrounding_presentation_gap_ms": 33.333416,
+          "ui_gap_ms": 561.362,
+          "ui_start_us": 13078385
+        },
+        {
+          "presentation_samples_during_gap": 25,
+          "surrounding_presentation_gap_ms": 16.666833,
+          "ui_gap_ms": 553.764,
+          "ui_start_us": 17438815
+        },
+        {
+          "presentation_samples_during_gap": 31,
+          "surrounding_presentation_gap_ms": 33.333458,
+          "ui_gap_ms": 592.287,
+          "ui_start_us": 22253461
+        },
+        {
+          "presentation_samples_during_gap": 26,
+          "surrounding_presentation_gap_ms": 16.666792,
+          "ui_gap_ms": 562.809,
+          "ui_start_us": 26671742
+        }
+      ],
+      "present_call_max_us": 5155.083,
+      "presentation_gap_ms": 4033.345292,
+      "presentation_status": "Metal-reported timestamps; no physical scanout measurement",
+      "presented_callback_gap_ms": 3693.020625,
+      "schedule_gap_ms": 3880.495958,
+      "total_unavailable_timestamps": 0,
+      "total_zero_timestamps": 44,
+      "ui_gap_ms": {
+        "left": null,
+        "operator": 592.287,
+        "right": null
+      },
+      "valid_presentation_samples": 1119,
+      "zero_timestamp_callbacks_in_interval": 37
+    },
+    {
+      "backpressure": 0,
+      "case": "native-native",
+      "commit_max_us": 5925.417,
+      "complete_callback_gap_ms": 33.378583,
+      "errors": 0,
+      "gpu_completion_gap_ms": 33.372833,
+      "lost_events": 0,
+      "max_inflight": 1,
+      "measured_seconds": 35.584,
+      "native_stop": [
+        {
+          "gpu_drain": "complete",
+          "host_s": "364055.915785833",
+          "inflight": "0",
+          "record_type": "native_stop"
+        }
+      ],
+      "operator_pauses": [
+        {
+          "presentation_samples_during_gap": 34,
+          "surrounding_presentation_gap_ms": 16.666833,
+          "ui_gap_ms": 567.103,
+          "ui_start_us": 5529794
+        },
+        {
+          "presentation_samples_during_gap": 33,
+          "surrounding_presentation_gap_ms": 16.666834,
+          "ui_gap_ms": 557.578,
+          "ui_start_us": 11601221
+        },
+        {
+          "presentation_samples_during_gap": 34,
+          "surrounding_presentation_gap_ms": 16.666792,
+          "ui_gap_ms": 565.492,
+          "ui_start_us": 17422576
+        },
+        {
+          "presentation_samples_during_gap": 33,
+          "surrounding_presentation_gap_ms": 25.000083,
+          "ui_gap_ms": 552.945,
+          "ui_start_us": 23455034
+        },
+        {
+          "presentation_samples_during_gap": 34,
+          "surrounding_presentation_gap_ms": 16.666792,
+          "ui_gap_ms": 574.871,
+          "ui_start_us": 29255461
+        },
+        {
+          "presentation_samples_during_gap": 33,
+          "surrounding_presentation_gap_ms": 16.666833,
+          "ui_gap_ms": 552.062,
+          "ui_start_us": 35305914
+        }
+      ],
+      "present_call_max_us": 4421.333,
+      "presentation_gap_ms": 41.666834,
+      "presentation_status": "Metal-reported timestamps; no physical scanout measurement",
+      "presented_callback_gap_ms": 41.646959,
+      "schedule_gap_ms": 33.338542,
+      "total_unavailable_timestamps": 0,
+      "total_zero_timestamps": 13,
+      "ui_gap_ms": {
+        "left": null,
+        "operator": 574.871,
+        "right": null
+      },
+      "valid_presentation_samples": 2127,
+      "zero_timestamp_callbacks_in_interval": 5
+    }
+  ]
+}

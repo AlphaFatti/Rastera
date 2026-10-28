@@ -86,3 +86,11 @@ See [the controlled presentation investigation](docs/presentation-investigation.
 cargo run --locked -p rastera-core --bin headless-producer -- --seconds=24
 cargo run --locked -p rastera-desktop --bin framework-control
 ```
+
+## Independent native output experiment (macOS 14+)
+
+The separate presentation control retains an eframe operator and renders its own diagnostic pattern through CAMetalDisplayLink/Metal, outside eframe repaint callbacks. It does not use Rastera's shared canvas. See [native output investigation](docs/native-output-investigation.md) for matched release measurements, native-bridge dependencies, remaining timing gaps and limitations. Integrated output and first-canvas acceptance remain pending.
+
+```sh
+cargo run --release --locked -p rastera-native-output --bin native-output-control
+```

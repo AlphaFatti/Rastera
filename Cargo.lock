@@ -1798,6 +1798,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rastera-native-output"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "wgpu",
+]
+
+[[package]]
 name = "raw-window-handle"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

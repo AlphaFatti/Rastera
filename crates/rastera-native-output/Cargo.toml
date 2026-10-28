@@ -1,0 +1,14 @@
+[package]
+name = "rastera-native-output"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "native-output-control"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.31.1", default-features = false, features = ["wgpu", "default_fonts"] }
+wgpu.workspace = true

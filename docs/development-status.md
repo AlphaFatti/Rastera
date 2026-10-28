@@ -96,3 +96,10 @@ See [presentation-investigation.md](presentation-investigation.md) for the exper
 The framework-only control reproduces roughly 0.6-second projection callback gaps through both native button invocation and the egui driver. The full native-button trial has similar UI gaps while producer cadence continues near target; egui-driven restore additionally stalls the producer's queue submission. This is reproduction/association evidence, not actual display-presentation timing or proof of the precise OS/framework lock involved. Four automated tests now pass, together with formatting, all-target compilation, build and Clippy. The earlier WIP's “submit” maxima included encoder finalization and cannot distinguish those two calls.
 
 This investigation exercises operator transitions only. It does not verify the historical stricter all-window automation case, replace human visual acceptance, fix the stall, or change the presentation backend. Milestone acceptance remains pending.
+
+
+## Native output presentation control
+
+The controlled presentation investigation was checkpointed and pushed as `2a9238e9e26636e95e021301e2e3a86975e30d2c`. The separate `experiment/native-output-presenter` branch adds a macOS 14+ diagnostic executable with an eframe operator and an independent CAMetalDisplayLink/native Metal output. Baseline renderer/application/control code and existing dependency versions remain unchanged.
+
+[Native output investigation](native-output-investigation.md) records matched release results. Metal reported 33–34 output presentations within each approximately 553–575 ms operator UI callback gap; the maximum gap between valid reported presentation timestamps in the scored native-transition trial was 41.667 ms. Zero presentation timestamps and shorter pacing disturbances remain. This is API presentation evidence, not physical scanout verification or proof that Rastera's integrated shared-canvas output is fixed. Resize, output minimize/restore and both close orders were exercised with clean GPU drains. Four Rust tests, three Python analysis tests, formatting, compilation and Clippy pass. Overall first-canvas milestone acceptance remains pending.

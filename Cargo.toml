@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/rastera-core", "crates/rastera-desktop"]
+members = ["crates/rastera-core", "crates/rastera-desktop", "crates/rastera-native-output"]
 resolver = "2"
 
 [workspace.package]
