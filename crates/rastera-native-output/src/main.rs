@@ -23,15 +23,33 @@ mod app {
         output: NativeOutput,
         activity: Arc<activity::Activity>,
         origin: Instant,
+        callbacks: u64,
         stop: mpsc::Sender<()>,
         monitor: Option<thread::JoinHandle<()>>,
     }
     impl eframe::App for Control {
         fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
             self.activity.enter(ctx);
+            self.callbacks += 1;
+            let elapsed = self.origin.elapsed().as_secs_f64();
+            let unix_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis();
             ctx.request_repaint_after(Duration::from_secs_f64(1.0 / 60.0));
             egui::CentralPanel::default().show(ctx, |ui| {
-                ui.heading("Independent native Metal output control");
+                ui.heading("Rastera — eframe / wgpu Metal controls (yellow circle)");
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Elapsed {elapsed:010.3} s   UI callback {}",
+                        self.callbacks
+                    ))
+                    .monospace()
+                    .size(28.0),
+                );
+                ui.monospace(format!(
+                    "Unix timestamp: {unix_ms} ms — sampled in UI callback"
+                ));
                 ui.label("CAMetalDisplayLink runs on its own thread. No shared Rastera canvas.");
                 ui.label(if self.output.is_open() {
                     "Output open"
@@ -134,6 +152,7 @@ mod app {
                     output,
                     activity,
                     origin,
+                    callbacks: 0,
                     stop,
                     monitor: Some(monitor),
                 }))

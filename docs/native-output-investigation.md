@@ -163,3 +163,77 @@ Four Rust tests and three focused Python analysis tests pass. Analysis tests cov
 The separate native presenter provides positive **Metal-reported presentation** evidence through operator transitions despite paused eframe UI callbacks. It is a useful candidate for the next integration experiment, not proof that Rastera's existing preview/output pipeline is fixed. This control does not consume the shared canvas, synchronize cross-queue texture access, implement output routing, or verify production behavior.
 
 Only one Mac, one short sequential run per accepted case, one native output versus two baseline viewports, and a light diagnostic shader were tested. The GPU and compositor are still shared physical resources. Display refresh/thermal/load conditions were not controlled, trial order was not randomized, and no camera/photodiode, scanout trace, genlock, external-projector matrix, hot-plug, prolonged show, or calibrated latency test was performed. Minimize-all/restore-all acceptance and the prior stricter automation case remain unverified. The zero timestamps, remaining pacing gaps, and lack of physical scanout verification must remain visible in any conclusion. Overall first-canvas acceptance is pending.
+
+## Content / window-direction follow-up (October 28, 2026)
+
+**Acceptance remains pending.** The pre-change native experiment was committed and pushed on `experiment/native-output-presenter` as `d1f3b56f4387fa7e349d10f23451dd48a23b8474` (`WIP: independent native presenter with pending visual acceptance`). The changes below form the subsequent WIP content-instrumentation checkpoint; the confirmed visual transition failure remains unresolved. Baseline renderer, shared canvas, geometry, framework and dependency versions remain unchanged.
+
+### Exact identities and user observation
+
+| Native title | Role and image | Source of animation |
+| --- | --- | --- |
+| `Rastera` | eframe/wgpu **Metal controls**, moving yellow circle | Rust `Instant` sampled by main-thread `Control::update` |
+| `Rastera — Native Output` | independent CAMetalLayer **picture**, grid/marker/stripe | native rendering-thread monotonic clock |
+
+The user clarified that the freeze ends **when the macOS minimize animation ends**, rather than persisting until restoration. They subsequently identified the “metal” window as the freezing window and requested visible timestamps there. Both directions were tested separately, including minimizing the picture while observing the yellow-circle controls. Terminology in earlier discussion was ambiguous; the titles above are the identities used in the evidence.
+
+The controls now display a large monotonic elapsed timestamp, UI callback counter, and Unix milliseconds sampled in the UI callback. These values intentionally stop updating when that callback stops: they describe the visible controls' content, not background liveness or display presentation. The circle has the same UI-derived clock. No claim is made that controls animation is independent of AppKit transitions.
+
+### Native content trace
+
+No operator-to-native animation-state coupling was found. Before this change, `needsUpdate` already computed animation from `CACurrentMediaTime()` on its dedicated run-loop thread and uploaded fragment bytes there; the fourth float (sequence) was unused in the shader. The picture does not sample an operator-generated texture. Its only image texture is each supplied drawable's render target.
+
+The native worker now establishes an explicit `std::chrono::steady_clock` origin. Each successful encoding increments a rendering-thread-owned 64-bit **content ID**. A typed 32-byte uniform carries elapsed time, actual drawable dimensions, and integer content identity. The shader renders the low 32 bits as ten large decimal digits and a 32-cell binary stripe (least significant bit left). At 60 Hz the visible ID wraps after roughly 2.27 years; logs retain all 64 bits. This is diagnostic picture content, not an editor overlay or Rastera canvas integration.
+
+`native_content_link` records associate content encoding, commit, completion, present-call and presented-handler records with the same captured-by-value content ID and drawable ID. Completion proves execution finished, not that a frame was visible. A valid drawable timestamp is still Apple API evidence, not physical scanout. The rendering thread owns the clock/counter/uniform update/encoding; driver threads deliver completion/presentation callbacks; the reporter only drains POD telemetry. AppKit window/view operations remain on main. No new bridge dependencies, queue synchronization, layer ownership, or presentation ordering changes were introduced.
+
+The summary now joins the entire trace by sequence and reports missing completions, missing present calls, missing handlers, frames without valid presentation evidence, and mismatched content/drawable links. Missing or zero timestamps remain unknown/skipped outcomes. A shutdown drain waits for GPU completion, not every presentation handler; terminal missing presentation callbacks are retained rather than silently marked presented.
+
+### Separate direction reproductions
+
+Matched release builds, same Mac and pinned versions as above. Screen Recording was granted and verified after restarting VS Code. Accessibility invokes the native yellow minimize button (`AXPress`), polls the target state and restores through native `AXMinimized=false`; these are native controls exercised by automation, **not human clicks or human acceptance**. The operator and picture remain in their nonoverlapping fixed layout. Two cycles per direction, three-second confirmed holds, separate processes. Window captures target only the *other* Rastera window by its Window Server ID.
+
+| Trial | Max controls UI gap | Max valid picture presentedTime gap | Whole-process zero callbacks | Missing presented handlers / committed frames |
+| --- | ---: | ---: | ---: | ---: |
+| Minimize controls, capture picture | 602.192 ms | 41.667 ms | 132 | 3 / 2,099 |
+| Minimize controls, no capture | 612.678 ms | 33.334 ms | 12 | 4 / 2,106 |
+| Minimize picture, capture controls | 574.712 ms | 6,816.688 ms (intentionally hidden picture) | 87 | 1 / 1,455 |
+| Existing egui operator driver, scored cycles 2–3 | 561.895 ms | 50.000 ms | 4 | 4 / 1,262 |
+
+The captured-controls trial has 88 committed frames without valid presentation evidence, including its one missing handler; captured-picture trial 135, no-capture operator trial 16, egui trial 8. All trials have zero content-link mismatches, missing completions, missing present calls, lost records, GPU errors or backpressure; max GPU work in flight is 1 and normal shutdown drains to 0. Unknown presentation outcomes must not be inferred from completion. In the captured-picture operator trial, 124 zero callbacks were inside the scored interval. Screenshot collection substantially perturbs this result (132 whole-process zeros versus 12 in the separate no-capture run); these are separate trials, not interchangeable performance samples.
+
+**Controls minimized, picture observed:** 121 app-window screenshots over 28.534 s decoded to monotonically advancing native content IDs, from 343 to 1,992. No adjacent captured IDs repeated; every ID exists in an encoded content record. Maximum capture spacing was 289.006 ms. Inside the four measured controls callback gaps, sampled picture IDs advanced `497 → 511`, `841 → 855 → 869`, `1320 → 1334 → 1347`, and `1675 → 1689`. Valid native presentation counts during those gaps were 32, 33, 35 and 31. This is positive evidence of changing captured image content through controls transitions, with limited temporal resolution. It cannot exclude a shorter compositor-visible pause between captures or prove scanout.
+
+**Picture minimized, controls observed:** 125 screenshots show four short repeated yellow-circle positions during transitions, spanning 236.566, 244.419, 237.853 and 470.634 ms between identical samples. The controls resume without restoring the hidden picture: each three-second confirmed-minimized hold contains 12 distinct circle positions. Controls CPU callbacks also recover. The picture's long presentation gap is expected while the picture itself is hidden; its content/presentation records resume on restore and shutdown succeeds. This reproduces the user's transition-only symptom in the yellow-circle window. It does **not** demonstrate a persistent GPU deadlock. The controls' main-thread/AppKit/eframe callback pause is observed; exact responsibility between synchronous native animation/event processing and drawable acquisition has not been newly isolated with a stack trace in this follow-up. The earlier shared-wgpu fence mechanism remains a separate baseline finding.
+
+### Commands and evidence
+
+```sh
+cargo build --release --locked -p rastera-native-output
+xcrun clang -fobjc-arc -framework Foundation -framework CoreGraphics \
+  tools/native_window_info.m -o /tmp/rastera-window-info
+python3 tools/native_output_probe.py native native --target=operator --capture \
+  --cycles=2 --out=/tmp/rastera-content/operator.log
+python3 tools/native_output_probe.py native native --target=picture --capture \
+  --cycles=2 --out=/tmp/rastera-content/picture.log
+python3 tools/native_output_probe.py native native --target=operator \
+  --cycles=2 --out=/tmp/rastera-content/operator-no-capture.log
+python3 tools/native_output_probe.py native egui --out=/tmp/rastera-content/content-egui.log
+python3 tools/decode_native_content.py /tmp/rastera-content/operator.frames
+python3 tools/summarize_native_output.py /tmp/rastera-content
+```
+
+The decoder uses installed `ffmpeg`/`ffprobe` and only supports this fixed 900×560 Retina picture screenshot layout. Screenshot filenames record request-start monotonic microseconds relative to driver launch, **not image acquisition/presentation timestamps**. Window-only capture may observe a surface differently from final desktop composition. Raw logs, driver event files and app-window PNGs are under `/tmp/rastera-content`; temporary evidence is not durable repository storage. Derived measurements and decoded IDs are preserved separately in `native-content-results.json`. Prior release comparison results remain unchanged.
+
+Automated checks pass after instrumentation: formatting, locked workspace compilation, four Rust tests, Clippy with warnings denied, native release build with Objective-C++ warnings denied, and four focused Python analysis tests. The existing `block` future compatibility warning remains. No claim of fixing the baseline integrated output is made. Human retest is still required using the exact titles: watch the picture's frame digits/marker while minimizing/restoring `Rastera`, and watch the yellow circle and its visible timestamps while minimizing/restoring `Rastera — Native Output`. Keep acceptance pending; native capture, API timestamps and CPU diagnostics do not substitute for that observation.
+
+### Timestamped retest of the freezing Metal controls
+
+After adding the controls timestamps, a separate one-cycle picture-minimize/restore run captured 63 controls-window images (`picture-timestamps.log`). The timestamp-region pixels repeat across request-start samples at 8.268962 and 8.533436 s, a 264.474 ms span. Both show **elapsed 8.010 s, UI callback 464, Unix 1793211917576 ms**; see [first capture](evidence/controls-transition-a.png) and [later capture](evidence/controls-transition-b.png). Another repeated timestamp-region pair spans 230.315 ms during restoration. Sampling bounds the observed hold; it does not measure the exact onset/end of the freeze. The final timestamped build recovers after both transitions and exits normally. This directly records the user-identified window freezing, rather than relying on the other window's presentation counters.
+
+Reproduce the timestamped direction with:
+
+```sh
+python3 tools/native_output_probe.py native native --target=picture --capture \
+  --cycles=1 --out=/tmp/rastera-content/picture-timestamps.log
+```

@@ -18,6 +18,7 @@ struct Event {
     uint64_t seq;
     double arrival;
     double a, b, c;
+    uint64_t content, drawable;
 };
 struct Stats {
     std::mutex mutex;
@@ -26,10 +27,10 @@ struct Stats {
     std::atomic<uint64_t> zero{0}, unavailable{0}, backpressure{0}, lost{0}, errors{0};
     std::atomic<unsigned> inflight{0}, maxInflight{0};
     std::atomic<bool> stop{false};
-    void record(const char *kind, uint64_t seq, double arrival, double a=0, double b=0, double c=0) {
+    void record(const char *kind, uint64_t seq, double arrival, double a=0, double b=0, double c=0, uint64_t content=0, uint64_t drawable=0) {
         std::lock_guard<std::mutex> lock(mutex);
         if (events.size() == 4096) { events.pop_front(); ++lost; }
-        events.push_back({kind,seq,arrival,a,b,c});
+        events.push_back({kind,seq,arrival,a,b,c,content,drawable});
     }
 };
 using StatsHandle = std::shared_ptr<Stats>;
@@ -39,6 +40,8 @@ void report(const StatsHandle &stats) {
     // Only the reporting thread writes per-frame records, never display/Metal callbacks.
     for (const auto &e: rows) {
         const auto seq = (unsigned long long)e.seq;
+        if (e.content) std::fprintf(stderr,"native_content_link kind=%s seq=%llu content_id=%llu drawable_id=%llu host_s=%.9f animation_s=%.9f\n",e.kind,seq,(unsigned long long)e.content,(unsigned long long)e.drawable,e.arrival,std::strcmp(e.kind,"content")==0?e.a:-1.0);
+        if (std::strcmp(e.kind,"content")==0) continue;
         if (std::strcmp(e.kind,"schedule")==0)
             std::fprintf(stderr,"native_event kind=schedule seq=%llu callback_host_s=%.9f deadline_host_s=%.9f target_present_estimate_host_s=%.9f\n",seq,e.arrival,e.a,e.b);
         else if (std::strcmp(e.kind,"commit")==0)
@@ -100,6 +103,8 @@ API_AVAILABLE(macos(14.0))
     dispatch_group_t _gpuWork;
     std::thread _worker;
     BOOL _closed;
+    std::chrono::steady_clock::time_point _animationOrigin;
+    uint64_t _contentID;
 }
 - (BOOL)start;
 - (void)stop;
@@ -123,13 +128,37 @@ vertex float4 diagnostic_vertex(uint i [[vertex_id]]) {
     const float2 p[3]={float2(-1,-1),float2(3,-1),float2(-1,3)};
     return float4(p[i],0,1);
 }
-fragment float4 diagnostic_fragment(float4 p [[position]], constant float4 &u [[buffer(0)]]) {
+struct Uniforms { float4 animation; uint4 identity; };
+fragment float4 diagnostic_fragment(float4 p [[position]], constant Uniforms &data [[buffer(0)]]) {
+    float4 u=data.animation;
     float2 uv=p.xy/u.yz;
     float3 color=uv.x<0.5 ? float3(0.03,0.16,0.50) : float3(0.50,0.08,0.02);
     if (fmod(p.x,80.0)<2.0 || fmod(p.y,80.0)<2.0) color=float3(0.6);
     float marker=0.08+fmod(u.x*0.25,0.84);
     if (abs(uv.x-marker)<0.015 && abs(uv.y-0.5)<0.2) color=float3(1,1,0);
     if (uv.y<0.08) color=uint(u.x*4.0)%2u ? float3(0,1,0) : float3(1,0,1);
+    // Ten decimal digits encode the low 32 bits of the native content ID.
+    if (uv.y>0.10 && uv.y<0.32 && uv.x>0.05 && uv.x<0.95) {
+        float2 q=float2((uv.x-0.05)/0.09,(uv.y-0.10)/0.22);
+        uint column=min(uint(q.x),9u), divisor=1u;
+        for (uint i=column;i<9u;++i) divisor*=10u;
+        uint digit=(data.identity.x/divisor)%10u;
+        const uint masks[10]={63,6,91,79,102,109,125,7,127,111};
+        float2 d=float2(fract(q.x),q.y);
+        bool horizontal=d.x>0.18 && d.x<0.78;
+        uint segment=7u;
+        if(horizontal && d.y<0.13) segment=0;
+        else if(horizontal && d.y>0.87) segment=3;
+        else if(horizontal && abs(d.y-0.5)<0.065) segment=6;
+        else if(d.x>0.72 && d.x<0.86) segment=d.y<0.5?1u:2u;
+        else if(d.x>0.10 && d.x<0.24) segment=d.y<0.5?5u:4u;
+        color=segment<7u && (masks[digit]&(1u<<segment)) ? float3(1) : float3(0);
+    }
+    // Machine-readable 32-bit stripe, least significant bit on the left.
+    if(uv.y>0.82 && uv.y<0.92 && uv.x>0.02 && uv.x<0.98) {
+        uint bit=min(uint((uv.x-0.02)/0.96*32.0),31u);
+        color=(data.identity.x&(1u<<bit)) ? float3(1) : float3(0);
+    }
     return float4(color,1);
 }
 )METAL"];
@@ -168,6 +197,7 @@ fragment float4 diagnostic_fragment(float4 p [[position]], constant float4 &u [[
     _worker = std::thread([presenter] {
         @autoreleasepool {
             NSCAssert(![NSThread isMainThread],@"Output renderer must be independent of main thread");
+            presenter->_animationOrigin = std::chrono::steady_clock::now();
             std::fprintf(stderr,"native_renderer_ready host_s=%.9f main_thread=0\n",CACurrentMediaTime());
             CAMetalDisplayLink *link = [[CAMetalDisplayLink alloc] initWithMetalLayer:presenter->_metalLayer];
             link.delegate = presenter;
@@ -203,10 +233,14 @@ fragment float4 diagnostic_fragment(float4 p [[position]], constant float4 &u [[
         id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
         if (!encoder) { ++state->errors; dispatch_semaphore_signal(_slots); return; }
         [encoder setRenderPipelineState:_pipeline];
-        float uniform[4] = {float(now),float(drawable.texture.width),float(drawable.texture.height),float(seq)};
-        // Avoid precision loss from large absolute host times in animation.
-        uniform[0] = float(fmod(now,3600.0));
-        [encoder setFragmentBytes:uniform length:sizeof(uniform) atIndex:0];
+        const uint64_t content = ++_contentID;
+        const uint64_t drawableID = drawable.drawableID;
+        const double animation = std::chrono::duration<double>(std::chrono::steady_clock::now()-_animationOrigin).count();
+        struct alignas(16) Uniforms { float animation[4]; uint32_t identity[4]; };
+        const Uniforms uniform = {{float(fmod(animation,3600.0)),float(drawable.texture.width),float(drawable.texture.height),0},
+                                  {uint32_t(content),uint32_t(content>>32),0,0}};
+        state->record("content",seq,now,animation,0,0,content,drawableID);
+        [encoder setFragmentBytes:&uniform length:sizeof(uniform) atIndex:0];
         [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [encoder endEncoding];
         unsigned active = ++state->inflight;
@@ -218,7 +252,7 @@ fragment float4 diagnostic_fragment(float4 p [[position]], constant float4 &u [[
         [command addCompletedHandler:^(id<MTLCommandBuffer> completed) {
             ++state->completed;
             if (completed.status == MTLCommandBufferStatusError) { ++state->errors; state->stop = true; }
-            state->record("complete",seq,CACurrentMediaTime(),completed.GPUStartTime,completed.GPUEndTime,double(completed.status));
+            state->record("complete",seq,CACurrentMediaTime(),completed.GPUStartTime,completed.GPUEndTime,double(completed.status),content,drawableID);
             --state->inflight;
             dispatch_semaphore_signal(slots);
             dispatch_group_leave(work);
@@ -231,19 +265,19 @@ fragment float4 diagnostic_fragment(float4 p [[position]], constant float4 &u [[
                     const double time = shown.presentedTime;
                     if (time == 0.0) ++state->zero;
                     else if (!std::isfinite(time) || time < 0) ++state->unavailable;
-                    state->record("presented",seq,arrival,time,double(shown.drawableID),std::isfinite(time) && time>0 ? 1:0);
-                } else { ++state->unavailable; state->record("presented",seq,arrival,0,0,0); }
+                    state->record("presented",seq,arrival,time,double(shown.drawableID),std::isfinite(time) && time>0 ? 1:0,content,drawableID);
+                } else { ++state->unavailable; state->record("presented",seq,arrival,0,0,0,content,drawableID); }
             }];
-        } else { ++state->unavailable; state->record("presented_unavailable",seq,now); }
+        } else { ++state->unavailable; state->record("presented_unavailable",seq,now,0,0,0,content,drawableID); }
         const double beforeCommit = CACurrentMediaTime();
         [command commit];
         ++state->submitted;
-        state->record("commit",seq,CACurrentMediaTime(),(CACurrentMediaTime()-beforeCommit)*1e6,(beforeCommit-now)*1e6);
+        state->record("commit",seq,CACurrentMediaTime(),(CACurrentMediaTime()-beforeCommit)*1e6,(beforeCommit-now)*1e6,0,content,drawableID);
         // CAMetalDisplayLink explicitly requires commit, then ordinary present().
         // Do not use timed present variants or commandBuffer.presentDrawable here.
         const double beforePresent = CACurrentMediaTime();
         [drawable present];
-        state->record("present_call",seq,CACurrentMediaTime(),(CACurrentMediaTime()-beforePresent)*1e6);
+        state->record("present_call",seq,CACurrentMediaTime(),(CACurrentMediaTime()-beforePresent)*1e6,0,0,content,drawableID);
         // The autorelease pool and local strong references end with this callback.
     }
 }

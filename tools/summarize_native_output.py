@@ -93,8 +93,32 @@ def summarize(path):
         result["operator_pauses"].append(dict(ui_start_us=int(r["max_gap_start_us"]), ui_gap_ms=int(r["max_gap_us"])/1000,
                                              presentation_samples_during_gap=sum(start <= t <= finish for t in valid),
                                              surrounding_presentation_gap_ms=ms(max_gap(surrounding))))
+    result["content_accounting"] = content_accounting(rows)
     result["native_stop"] = [r for r in rows if r["record_type"] == "native_stop"]
     return result
+
+
+def content_accounting(rows):
+    """Whole trace joins retain missing callbacks and unknown presentation outcomes."""
+    links = [r for r in rows if r["record_type"] == "native_content_link"]
+    stages = {}
+    for r in links:
+        stages.setdefault(r["kind"], {})[r["seq"]] = r
+    encoded = stages.get("content", {})
+    committed = stages.get("commit", {})
+    handlers = stages.get("presented", {})
+    valid = {r["seq"] for r in rows if r["record_type"] == "native_event" and
+             r.get("kind") == "presented_handler" and r.get("timestamp_valid") == "1"}
+    mismatch = [r for r in links if r["seq"] in encoded and
+                (r["content_id"],r["drawable_id"]) !=
+                (encoded[r["seq"]]["content_id"],encoded[r["seq"]]["drawable_id"])]
+    return dict(encoded=len(encoded), committed=len(committed),
+                missing_completion=sorted(set(committed)-set(stages.get("complete", {})), key=int),
+                missing_present_call=sorted(set(committed)-set(stages.get("present_call", {})), key=int),
+                missing_presented_handler=sorted(set(committed)-set(handlers), key=int),
+                without_valid_presentation=sorted(set(committed)-valid, key=int),
+                content_link_mismatches=len(mismatch),
+                note="Whole-process records; missing/invalid presentation is unknown, not proof of display or GPU deadlock")
 
 
 def main():

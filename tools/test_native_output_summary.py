@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from summarize_native_output import summarize
+from summarize_native_output import summarize, content_accounting
 
 
 class PresentationSummaryTests(unittest.TestCase):
@@ -41,6 +41,17 @@ class PresentationSummaryTests(unittest.TestCase):
         ])
         self.assertIsNone(result["presentation_gap_ms"])
         self.assertEqual(result["presentation_status"], "unavailable")
+
+    def test_content_join_preserves_missing_and_invalid_presentations(self):
+        rows = [dict(record_type="native_content_link", kind=k, seq=str(i),
+                     content_id=str(i), drawable_id="7")
+                for i, kinds in [(1, ["content", "commit", "complete", "present_call", "presented"]),
+                                 (2, ["content", "commit"])] for k in kinds]
+        result = content_accounting(rows)
+        self.assertEqual(result["missing_presented_handler"], ["2"])
+        self.assertEqual(result["without_valid_presentation"], ["1", "2"])
+        self.assertEqual(result["missing_completion"], ["2"])
+        self.assertEqual(result["content_link_mismatches"], 0)
 
     def test_event_loss_marks_trace_incomplete(self):
         result = self.collect([], lost=1)

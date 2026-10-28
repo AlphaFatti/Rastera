@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import subprocess
 import time
+import threading
 from presentation_probe import apple_event
 
 
@@ -14,6 +15,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", choices=["framework", "full", "native"])
     parser.add_argument("mode", choices=["idle", "native", "egui", "lifecycle", "close-operator"])
+    parser.add_argument("--target", choices=["operator", "picture"], default="operator")
+    parser.add_argument("--capture", action="store_true", help="Capture only the other app window; requires Screen Recording and /tmp/rastera-window-info")
     parser.add_argument("--profile", choices=["debug", "release"], default="release")
     parser.add_argument("--cycles", type=int, default=3)
     parser.add_argument("--seconds", type=int, default=12)
@@ -28,6 +31,10 @@ def main():
         command += ["--outputs", "--diagnostics"]
     if args.mode == "egui":
         command += ["--minimize-test=operator"]
+    if args.capture and (args.app != "native" or args.mode != "native"):
+        parser.error("capture requires native native")
+    if args.target == "picture" and (args.app != "native" or args.mode != "native"):
+        parser.error("picture target requires native native")
     origin = time.monotonic_ns()
     origin_unix = time.time_ns()
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -52,6 +59,12 @@ end repeat
 return {{(value of attribute "AXMinimized" of targetWindow), {checks}}}''')
             if title == "Rastera" and result != ", ".join([expected]+["false"]*len(outputs)):
                 raise RuntimeError(f"Unexpected native states: {result}")
+            if result.split(", ")[0] != expected:
+                raise RuntimeError(f"Target state mismatch: {result}")
+            if title != "Rastera":
+                operator_state = apple_event(pid, 'return value of attribute "AXMinimized" of window "Rastera"')
+                if operator_state != "false":
+                    raise RuntimeError(f"Operator unexpectedly minimized: {operator_state}")
             return result
 
         def close(pid, title):
@@ -68,14 +81,36 @@ return {{(value of attribute "AXMinimized" of targetWindow), {checks}}}''')
             event("layout_ready")
             if args.mode != "egui":
                 time.sleep(2)
+            capture_stop = threading.Event()
+            capture_thread = None
+            if args.capture:
+                info = json.loads(subprocess.check_output(["/tmp/rastera-window-info", str(proc.pid)], text=True))
+                if not info["screen_capture_allowed"]:
+                    raise RuntimeError("Screen Recording not granted")
+                observed = "Rastera — Native Output" if args.target == "operator" else "Rastera"
+                window_id = next(w["id"] for w in info["windows"] if w["title"] == observed)
+                capture_dir = args.out.with_suffix(".frames")
+                capture_dir.mkdir(exist_ok=True)
+                def capture():
+                    while not capture_stop.is_set():
+                        started = time.monotonic_ns()-origin
+                        dest = capture_dir/f"{started//1000:012d}.png"
+                        result = subprocess.run(["/usr/sbin/screencapture", "-x", "-o", "-l", str(window_id), str(dest)], capture_output=True)
+                        if result.returncode:
+                            (capture_dir/"error.txt").write_bytes(result.stderr)
+                            break
+                        capture_stop.wait(0.10)
+                capture_thread = threading.Thread(target=capture)
+                capture_thread.start()
+                event("capture_start", observed_title=observed, window_id=window_id)
             event("measure_start")
             if args.mode == "idle":
                 time.sleep(args.seconds)
             elif args.mode == "native":
                 for cycle in range(1, args.cycles+1):
                     for minimized in [True, False]:
-                        event("native_request", cycle=cycle, minimized=minimized)
-                        state = set_minimized(proc.pid, "Rastera", minimized)
+                        event("native_request", cycle=cycle, minimized=minimized, target=args.target)
+                        state = set_minimized(proc.pid, "Rastera" if args.target == "operator" else outputs[0], minimized)
                         event("native_confirm", cycle=cycle, minimized=minimized, result=state)
                         time.sleep(3)
             elif args.mode == "egui":
@@ -110,6 +145,9 @@ return {{(value of attribute "AXMinimized" of targetWindow), {checks}}}''')
                 proc.wait(timeout=8)
                 if proc.returncode:
                     raise RuntimeError(f"Operator-first exit={proc.returncode}")
+            if capture_thread:
+                capture_stop.set()
+                capture_thread.join(timeout=5)
             event("measure_end")
             if proc.poll() is None:
                 # Graceful exit for all windowed controls; also captures final native
@@ -121,6 +159,10 @@ return {{(value of attribute "AXMinimized" of targetWindow), {checks}}}''')
                     raise RuntimeError(f"Close exit={proc.returncode}")
             event("done", returncode=proc.returncode)
         finally:
+            if "capture_stop" in locals():
+                capture_stop.set()
+            if "capture_thread" in locals() and capture_thread:
+                capture_thread.join(timeout=5)
             if proc.poll() is None:
                 proc.terminate()
                 try:
