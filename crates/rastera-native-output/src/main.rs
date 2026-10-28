@@ -116,7 +116,7 @@ mod app {
             ..Default::default()
         };
         eframe::run_native(
-            "Rastera",
+            "Rastera — Operator / UI preview (control)",
             options,
             Box::new(move |cc| {
                 let (output, stats) = NativeOutput::new(disable_animations)?;

@@ -1793,7 +1793,10 @@ name = "rastera-desktop"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "foreign-types",
+ "pollster",
  "rastera-core",
+ "raw-window-handle",
  "wgpu",
 ]
 

@@ -9,3 +9,8 @@ rust-version.workspace = true
 rastera-core = { path = "../rastera-core" }
 eframe = { version = "0.31.1", default-features = false, features = ["wgpu", "default_fonts"] }
 wgpu.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+foreign-types = "=0.5.0"
+raw-window-handle = "=0.6.2"
+pollster = "=0.4.0"

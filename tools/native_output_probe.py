@@ -26,7 +26,8 @@ def main():
     if args.mode in ["lifecycle", "close-operator"] and args.app != "native":
         parser.error("lifecycle modes apply only to native")
     binary = {"framework": "framework-control", "full": "rastera-desktop", "native": "native-output-control"}[args.app]
-    outputs = ["Rastera — Native Output"] if args.app == "native" else ["Rastera — Left", "Rastera — Right"]
+    operator = "Rastera — Operator / UI preview (control)" if args.app == "native" else "Rastera"
+    outputs = ["Rastera — Native clean output (control)"] if args.app == "native" else ["Rastera — Left", "Rastera — Right"]
     command = [str(Path("target", args.profile, binary).resolve())]
     if args.app == "native":
         command += ["--window-animation="+args.window_animation]
@@ -60,12 +61,12 @@ if (value of attribute "AXMinimized" of targetWindow) is {expected} then exit re
 delay 0.1
 end repeat
 return {{(value of attribute "AXMinimized" of targetWindow), {checks}}}''')
-            if title == "Rastera" and result != ", ".join([expected]+["false"]*len(outputs)):
+            if title == operator and result != ", ".join([expected]+["false"]*len(outputs)):
                 raise RuntimeError(f"Unexpected native states: {result}")
             if result.split(", ")[0] != expected:
                 raise RuntimeError(f"Target state mismatch: {result}")
-            if title != "Rastera":
-                operator_state = apple_event(pid, 'return value of attribute "AXMinimized" of window "Rastera"')
+            if title != operator:
+                operator_state = apple_event(pid, f'return value of attribute "AXMinimized" of window "{operator}"')
                 if operator_state != "false":
                     raise RuntimeError(f"Operator unexpectedly minimized: {operator_state}")
             return result
@@ -77,7 +78,7 @@ return {{(value of attribute "AXMinimized" of targetWindow), {checks}}}''')
         event("launch", pid=proc.pid, command=command, profile=args.profile)
         try:
             time.sleep(1)
-            layout = ['set frontmost to true', 'set position of window "Rastera" to {20, 40}', 'set size of window "Rastera" to {900, 400}']
+            layout = ['set frontmost to true', f'set position of window "{operator}" to {{20, 40}}', f'set size of window "{operator}" to {{900, 400}}']
             for i, output in enumerate(outputs):
                 layout += [f'set position of window "{output}" to {{{20+i*480}, 500}}', f'set size of window "{output}" to {{450, 280}}']
             apple_event(proc.pid, "\n".join(layout))
@@ -90,7 +91,7 @@ return {{(value of attribute "AXMinimized" of targetWindow), {checks}}}''')
                 info = json.loads(subprocess.check_output(["/tmp/rastera-window-info", str(proc.pid)], text=True))
                 if not info["screen_capture_allowed"]:
                     raise RuntimeError("Screen Recording not granted")
-                observed = "Rastera — Native Output" if args.target == "operator" else "Rastera"
+                observed = "Rastera — Native clean output (control)" if args.target == "operator" else operator
                 window_id = next(w["id"] for w in info["windows"] if w["title"] == observed)
                 capture_dir = args.out.with_suffix(".frames")
                 capture_dir.mkdir(exist_ok=True)
@@ -118,7 +119,7 @@ return {{(value of attribute "AXMinimized" of targetWindow), {checks}}}''')
                 for cycle in range(1, args.cycles+1):
                     for minimized in [True, False]:
                         event("native_request", cycle=cycle, minimized=minimized, target=args.target)
-                        state = set_minimized(proc.pid, "Rastera" if args.target == "operator" else outputs[0], minimized)
+                        state = set_minimized(proc.pid, operator if args.target == "operator" else outputs[0], minimized)
                         event("native_confirm", cycle=cycle, minimized=minimized, result=state)
                         time.sleep(3)
             elif args.mode == "egui":
@@ -143,13 +144,13 @@ return {{(value of attribute "AXMinimized" of targetWindow), {checks}}}''')
                 close(proc.pid, outputs[0])
                 time.sleep(3)
                 event("close_operator_request")
-                close(proc.pid, "Rastera")
+                close(proc.pid, operator)
                 proc.wait(timeout=8)
                 if proc.returncode:
                     raise RuntimeError(f"Lifecycle exit={proc.returncode}")
             elif args.mode == "close-operator":
                 event("close_operator_request")
-                close(proc.pid, "Rastera")
+                close(proc.pid, operator)
                 proc.wait(timeout=8)
                 if proc.returncode:
                     raise RuntimeError(f"Operator-first exit={proc.returncode}")
@@ -161,7 +162,7 @@ return {{(value of attribute "AXMinimized" of targetWindow), {checks}}}''')
                 # Graceful exit for all windowed controls; also captures final native
                 # stop/drain telemetry instead of killing the output renderer.
                 event("close_operator_request")
-                close(proc.pid, "Rastera")
+                close(proc.pid, operator)
                 proc.wait(timeout=8)
                 if proc.returncode:
                     raise RuntimeError(f"Close exit={proc.returncode}")

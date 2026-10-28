@@ -13,14 +13,14 @@ with (base/'sample-transition.log').open('w') as log:
  p=subprocess.Popen([str(Path('target/release/native-output-control').resolve()),'--window-animation=default'],stdout=log,stderr=subprocess.STDOUT)
  try:
   time.sleep(2)
-  apple_event(p.pid,'set frontmost to true\nset position of window "Rastera" to {20,40}\nset position of window "Rastera — Native Output" to {20,500}')
+  apple_event(p.pid,'set frontmost to true\nset position of window "Rastera — Operator / UI preview (control)" to {20,40}\nset position of window "Rastera — Native clean output (control)" to {20,500}')
   sampler=subprocess.Popen(['/usr/bin/sample',str(p.pid),'10','1','-file',str(base/'transition.sample.txt')],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
   time.sleep(1)
-  print('native minimize:',apple_event(p.pid,'perform action "AXPress" of (first button of window "Rastera — Native Output" whose subrole is "AXMinimizeButton")'),flush=True)
+  print('native minimize:',apple_event(p.pid,'perform action "AXPress" of (first button of window "Rastera — Native clean output (control)" whose subrole is "AXMinimizeButton")'),flush=True)
   sampler.wait(timeout=15)
-  apple_event(p.pid,'set value of attribute "AXMinimized" of window "Rastera — Native Output" to false')
+  apple_event(p.pid,'set value of attribute "AXMinimized" of window "Rastera — Native clean output (control)" to false')
   time.sleep(2)
-  apple_event(p.pid,'perform action "AXPress" of (first button of window "Rastera" whose subrole is "AXCloseButton")')
+  apple_event(p.pid,'perform action "AXPress" of (first button of window "Rastera — Operator / UI preview (control)" whose subrole is "AXCloseButton")')
   p.wait(timeout=8)
   print('exit',p.returncode)
  finally:

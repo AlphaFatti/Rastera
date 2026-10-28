@@ -94,3 +94,17 @@ The separate presentation control retains an eframe operator and renders its own
 ```sh
 cargo run --release --locked -p rastera-native-output --bin native-output-control
 ```
+
+## Shared canvas with native clean outputs (WIP, macOS 14+)
+
+```sh
+cargo run --release --locked -p rastera-desktop --bin shared-canvas-native
+# Staged bring-up: native full preview only, then Left, then both outputs:
+cargo run --release --locked -p rastera-desktop --bin shared-canvas-native -- --outputs=0
+cargo run --release --locked -p rastera-desktop --bin shared-canvas-native -- --outputs=1
+cargo run --release --locked -p rastera-desktop --bin shared-canvas-native -- --outputs=2
+```
+
+**Operator / UI preview** contains controls and the full native canvas preview. **Native clean output — Left/Right** are the actual 1920 × 1080 halves. Operator checkboxes close/reopen outputs; closing the operator quits. Arrange all windows without overlap for visual checks. One core producer publishes completed frames into a fixed four-texture GPU pool; native consumers retain each texture until their GPU reads finish. No CPU frame readback is used.
+
+The operator UI transition pause remains. Clean-output movement was captured through transitions, but capturing the composited operator can still stall native callbacks; presentation/capture limitations and unverified hardware checks are recorded in [shared-canvas integration](docs/shared-canvas-integration.md). Acceptance remains pending. The original application and framework control commands above remain available. The independent `native-output-control` windows now end in `(control)` and use explicit role titles; that baseline still renders its own diagnostic pattern.

@@ -174,7 +174,7 @@ fragment float4 diagnostic_fragment(float4 p [[position]], constant Uniforms &da
     window = [[NSWindow alloc] initWithContentRect:NSMakeRect(20,150,600,338)
         styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable
         backing:NSBackingStoreBuffered defer:NO];
-    window.title = @"Rastera — Native Output";
+    window.title = @"Rastera — Native clean output (control)";
     if (disableAnimations) window.animationBehavior = NSWindowAnimationBehaviorNone;
     std::fprintf(stderr,"animation_settings host_s=%.9f window=native_output requested=%s readback=%ld reduce_motion=%d main_thread=1\n",
         CACurrentMediaTime(),disableAnimations?"none":"default",(long)window.animationBehavior,

@@ -8,7 +8,7 @@ Status recorded October 28, 2026. This is an engineering prototype, not a produc
 
 ## Working scope
 
-- Two-crate Rust workspace: UI-independent geometry/GPU generator and eframe desktop shell.
+- Rust workspace with UI-independent geometry/GPU generation, the desktop shell, and a separate native presentation control crate.
 - One fixed 3840 × 1080 offscreen GPU texture, generated via wgpu/Metal on a dedicated producer thread.
 - Blue left/orange right diagnostic halves, identification blocks, 120-pixel grid, single-pixel seam columns, and animated markers.
 - Full operator preview plus independently opened/closed native left and right projection windows. Exact 1920 × 1080 source halves; clean content with black aspect-fit bars and ordinary macOS window chrome.
@@ -111,3 +111,10 @@ The separate native experiment checkpoint `d1f3b56` was pushed before further ch
 ### Animation-settings control
 
 The instrumentation/confirmed visual failure was checkpointed and pushed as `beeaec7`. One identical release binary compared default animations/Reduce Motion off, `.none`/off on the native picture, and default/on, each with captured idle and three native minimize/restore cycles. All conditions retain six visible controls timestamp holds and roughly 0.55–0.61 s UI callback gaps. Neither setting fixes the reported direction. Reduce Motion was changed through normal System Settings and restored to its recorded original off value. Independent native scheduling/completion continues during the controls gaps; a separate stack sample finds AppKit's minimize-to-Dock transaction wait on main. [The investigation](native-output-investigation.md) preserves loose screenshot acquisition bounds, zero/missing presentation evidence and limits. Four Rust and seven Python tests, formatting, locked checks, Clippy and native release build pass. The next preview isolation candidate is documented but not implemented. Acceptance remains pending.
+
+
+## Native shared-canvas integration — review work
+
+Animation-settings WIP checkpoint `fe359157ba2bd6c41dfc013b082b2969f9344eaa` was pushed before these changes. The separate `shared-canvas-native` desktop executable now uses the actual core generator with one producer and a bounded four-texture, GPU-completion-leased handoff. Native full preview and Left/Right sample the same logical canvas; clean outputs have exact existing slice geometry and no UI overlays. Baseline render paths remain available, with native-control titles clarified.
+
+[The integration record](shared-canvas-integration.md) distinguishes API checks, captured moving content and human/hardware acceptance. Staged consumers, three-cycle operator/Left/Right transitions, clean-only/no-capture controls, 1:1 screenshot seam checks, resizing, native close/UI reopen and normal zero-lease shutdown were exercised. Captured visible output markers advance inside a 576 ms UI callback pause. Capturing the composited operator still causes unresolved native callback stalls; cached window snapshots can also contradict presentation counters. Those limits remain explicit. Default macOS settings and dependency versions are preserved. Six Rust tests, nine Python tests, formatting, compilation, release build and Clippy pass. Operator UI pauses, broader capture continuity, physical-display verification and overall acceptance remain pending.
