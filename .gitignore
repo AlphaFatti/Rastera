@@ -1,0 +1,24 @@
+# Rust build output and local/temporary toolchains
+/target/
+/.rustup/
+/rastera-cargo/
+/rastera-rustup/
+/.toolchains/
+/.cargo/bin/
+/.cargo/registry/
+/.cargo/git/
+/.cargo/.global-cache
+/tmp/
+
+# Machine-specific files, editor state, logs, and local credentials
+.DS_Store
+._*
+.vscode/
+.idea/
+*.swp
+*.swo
+*.log
+.env
+.env.*
+!.env.example
+.aws/

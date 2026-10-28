@@ -1,0 +1,10 @@
+[package]
+name = "rastera-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rastera-core = { path = "../rastera-core" }
+eframe = { version = "0.31.1", default-features = false, features = ["wgpu", "default_fonts"] }
+wgpu.workspace = true
