@@ -1,3 +1,4 @@
+mod activity;
 mod diagnostics;
 use diagnostics::{output_id, Activity, Diagnostics, PaintProbe};
 use eframe::egui;
@@ -162,7 +163,8 @@ fn main() -> eframe::Result {
                 &canvas.view,
                 wgpu::FilterMode::Nearest,
             );
-            let activity = std::array::from_fn(|_| Arc::new(Activity::default()));
+            let activity =
+                std::array::from_fn(|_| Arc::new(Activity::new(canvas.stats.timings.origin)));
             let diagnostics =
                 Diagnostics::start(cc.egui_ctx.clone(), canvas.stats.clone(), activity.clone());
             Ok(Box::new(Rastera {

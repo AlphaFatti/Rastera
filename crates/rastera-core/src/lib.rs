@@ -1,5 +1,6 @@
 //! Canvas geometry and GPU generator. No dependency on the operator UI.
 pub mod renderer;
+pub mod timing;
 
 pub const WIDTH: u32 = 3840;
 pub const HEIGHT: u32 = 1080;

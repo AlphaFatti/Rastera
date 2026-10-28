@@ -1,5 +1,6 @@
 [package]
 name = "rastera-desktop"
+default-run = "rastera-desktop"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

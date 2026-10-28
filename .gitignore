@@ -22,3 +22,6 @@
 .env.*
 !.env.example
 .aws/
+
+# Python diagnostic tooling
+__pycache__/

@@ -1,47 +1,12 @@
 //! Opt-in diagnostics and native minimize/restore driver. Never draws into outputs.
+pub use crate::activity::{output_id, Activity};
 use eframe::egui;
 use rastera_core::renderer::RenderStats;
 use std::{
-    sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc, Arc, OnceLock,
-    },
+    sync::{atomic::Ordering, mpsc, Arc},
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
-
-#[derive(Default)]
-pub struct Activity {
-    started: OnceLock<Instant>,
-    last_ui_us: AtomicU64,
-    pub max_ui_gap_us: AtomicU64,
-    pub entered: AtomicU64,
-    pub painted: AtomicU64,
-    pub observed_frame: AtomicU64,
-    pub finished: AtomicU64,
-    pub minimized: AtomicBool,
-}
-impl Activity {
-    pub fn enter(&self, ctx: &egui::Context) {
-        let now = self.started.get_or_init(Instant::now).elapsed().as_micros() as u64;
-        let previous = self.last_ui_us.swap(now, Ordering::Relaxed);
-        if previous > 0 {
-            self.max_ui_gap_us
-                .fetch_max(now - previous, Ordering::Relaxed);
-        }
-        self.entered.fetch_add(1, Ordering::Relaxed);
-        self.minimized.store(
-            ctx.input(|i| i.viewport().minimized.unwrap_or(false)),
-            Ordering::Relaxed,
-        );
-    }
-    pub fn finish(&self) {
-        self.finished.fetch_add(1, Ordering::Relaxed);
-    }
-}
-pub fn output_id(i: usize) -> egui::ViewportId {
-    egui::ViewportId::from_hash_of(("projection", i))
-}
 
 pub struct Diagnostics {
     stop: mpsc::Sender<()>,
@@ -64,38 +29,42 @@ impl Diagnostics {
                 "--minimize-test must be operator, left, right, or all"
             );
         }
+        eprintln!(
+            "clock_anchor mono_us={} unix_us={}",
+            producer.timings.origin.elapsed().as_micros(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_micros()
+        );
         let (stop, rx) = mpsc::channel();
         let worker = thread::spawn(move || {
+            let mut previous = [[0; 3]; 3];
             for second in 1.. {
                 match rx.recv_timeout(Duration::from_secs(1)) {
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                     _ => break,
                 }
-                eprint!(
-                    "t={second}s producer submitted={} completed={} phase={} max_submit_ms={} max_wait_ms={}",
+                eprintln!(
+                    "producer t_us={} submitted={} completed={} phase={} phase_start_us={}",
+                    producer.timings.origin.elapsed().as_micros(),
                     producer.submitted.load(Ordering::Relaxed),
                     producer.completed.load(Ordering::Relaxed),
                     producer.phase.load(Ordering::Relaxed),
-                    producer.max_submit_us.load(Ordering::Relaxed) / 1000,
-                    producer.max_wait_us.load(Ordering::Relaxed) / 1000
+                    producer.phase_since_us.load(Ordering::Relaxed)
                 );
-                for (name, v) in ["operator", "left", "right"].into_iter().zip(&views) {
-                    eprint!(
-                        " {name}={}/{} paint={} frame={} max_ui_gap_ms={} min={}",
-                        v.entered.load(Ordering::Relaxed),
-                        v.finished.load(Ordering::Relaxed),
-                        v.painted.load(Ordering::Relaxed),
-                        v.observed_frame.load(Ordering::Relaxed),
-                        v.max_ui_gap_us.load(Ordering::Relaxed) / 1000,
-                        v.minimized.load(Ordering::Relaxed)
-                    );
+                eprint!("{}", producer.timings.report());
+                for (i, name) in ["operator", "left", "right"].into_iter().enumerate() {
+                    eprint!("{}", views[i].report(name, &mut previous[i]));
                 }
-                eprintln!();
                 if let Some(case) = &case {
                     // Three separate minimize/restore cycles, three seconds per state.
                     if second % 3 == 0 && second <= 18 {
                         let minimized = second % 6 == 3;
-                        eprintln!("TEST {case}: minimized={minimized}");
+                        eprintln!(
+                            "event t_us={} driver=egui case={case} minimized={minimized}",
+                            producer.timings.origin.elapsed().as_micros()
+                        );
                         for (i, name) in ["operator", "left", "right"].into_iter().enumerate() {
                             if case == "all" || case == name {
                                 let id = if i == 0 {

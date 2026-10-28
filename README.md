@@ -6,7 +6,7 @@ The long-term [architecture blueprint](docs/architecture.md) describes planned w
 
 ## WIP checkpoint — acceptance pending
 
-The minimize/restore transition stall remains unresolved. Automated formatting, compilation/build, all three tests, and Clippy pass. Individual native Operator, Left, and Right minimize/restore transitions were exercised and recovered. The stricter all-window automation check remains unverified after a System Events timeout. This checkpoint does not signify first-canvas milestone acceptance; see the detailed verification record in [development status](docs/development-status.md).
+The minimize/restore transition stall remains unresolved. Automated formatting, compilation/build, tests, and Clippy pass. Individual native Operator, Left, and Right minimize/restore transitions were exercised and recovered. The stricter all-window automation check remains unverified after a System Events timeout. This checkpoint does not signify first-canvas milestone acceptance; see the detailed verification record in [development status](docs/development-status.md).
 
 ## Setup on an Apple silicon Mac
 
@@ -65,7 +65,7 @@ This is an opaque SDR diagnostic pattern, not a calibrated media color pipeline.
 cargo run --locked -p rastera-desktop -- --outputs --diagnostics
 ```
 
-Once per second, stderr reports producer submissions/completions and phase (`0` pacing, `1` encoding, `2` queue submission, `3` GPU wait, `4` notifying viewports), maximum submission/wait duration, and per-viewport UI entry/return counts, GPU paint-pass entries, latest completed producer count observed by paint, and maximum UI callback gap. These are CPU-side diagnostics, not presentation timestamps. Counters are sampled independently and can differ briefly while a frame is in progress. The reported minimized flag is egui's cached state: egui-winit 0.31.1 does not refresh it from native macOS window state on every frame, so it may remain false after a native minimize.
+Once per second, stderr reports monotonic timestamps, producer submissions/completions and phase (`0` pacing, `1` recording, `2` queue submission, `3` GPU completion wait, `4` notifying viewports, `5` encoder finish). Fresh interval samples time recording, encoder finish, queue submission, completion wait and notification separately, plus producer cadence. Each reports count, total, maximum and the maximum's start timestamp. Per-viewport intervals report UI entry/return counts, CPU paint-pass entries and callback gaps with start timestamps. These are CPU-side diagnostics, not GPU execution or display-presentation timestamps. Counters are sampled independently and can differ briefly while a frame is in progress. The reported minimized flag is egui's cached state: egui-winit 0.31.1 does not refresh it from native macOS window state on every frame, so it may remain false after a native minimize.
 
 An opt-in native-command driver exercises three minimize/restore cycles and closes the operator afterward. Run each case separately:
 
@@ -77,3 +77,12 @@ cargo run --locked -p rastera-desktop -- --minimize-test=all
 ```
 
 This driver sends native window commands through egui. It does not substitute for clicking macOS window controls and observing the visible outputs during the transition. AppKit's synchronous minimize/restore command itself may pause the UI thread during the animation.
+
+## Presentation controls
+
+See [the controlled presentation investigation](docs/presentation-investigation.md) for measured results and reproducible native-control/egui-driver commands. The framework-only control also reproduces the transition pause; the shared canvas is not necessary for that effect. The full egui-driven restore additionally stalls producer queue submission. Milestone acceptance remains pending.
+
+```sh
+cargo run --locked -p rastera-core --bin headless-producer -- --seconds=24
+cargo run --locked -p rastera-desktop --bin framework-control
+```

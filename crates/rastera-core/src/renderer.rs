@@ -1,4 +1,4 @@
-use crate::{HEIGHT, WIDTH};
+use crate::{timing::Timings, HEIGHT, WIDTH};
 use std::{
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -12,11 +12,21 @@ use std::{
 #[derive(Default)]
 pub struct RenderStats {
     pub submitted: AtomicU64,
-    pub max_submit_us: AtomicU64,
-    pub max_wait_us: AtomicU64,
+    pub timings: Timings,
     pub completed: AtomicU64,
-    /// 0: pacing, 1: encoding, 2: submitting, 3: waiting for GPU, 4: notifying views.
+    /// 0: pacing, 1: recording, 2: submitting, 3: GPU wait, 4: notifying, 5: finishing.
     pub phase: AtomicUsize,
+    pub phase_since_us: AtomicU64,
+}
+
+impl RenderStats {
+    fn set_phase(&self, phase: usize) {
+        self.phase_since_us.store(
+            self.timings.origin.elapsed().as_micros() as u64,
+            Ordering::Relaxed,
+        );
+        self.phase.store(phase, Ordering::Relaxed);
+    }
 }
 
 /// Owns the shared texture and a paced GPU producer. Dropping stops and joins it.
@@ -116,10 +126,16 @@ impl CanvasRenderer {
         let progress = stats.clone();
         let worker = thread::spawn(move || {
             let start = Instant::now();
+            let mut previous_frame = None;
             let period = Duration::from_nanos(1_000_000_000 / 60);
             let mut deadline = start;
             loop {
-                progress.phase.store(1, Ordering::Relaxed);
+                let record_start = Instant::now();
+                if let Some(previous) = previous_frame {
+                    progress.timings.record(0, previous, record_start);
+                }
+                previous_frame = Some(record_start);
+                progress.set_phase(1);
                 queue.write_buffer(&uniform, 0, &start.elapsed().as_secs_f32().to_ne_bytes());
                 let mut encoder = device.create_command_encoder(&Default::default());
                 {
@@ -141,25 +157,28 @@ impl CanvasRenderer {
                     pass.set_bind_group(0, &bind, &[]);
                     pass.draw(0..3, 0..1);
                 }
-                progress.phase.store(2, Ordering::Relaxed);
+                progress.timings.record(1, record_start, Instant::now());
+                progress.set_phase(5);
+                let finish_start = Instant::now();
+                let command = encoder.finish();
+                progress.timings.record(2, finish_start, Instant::now());
+                progress.set_phase(2);
                 let submit_start = Instant::now();
-                let submission = queue.submit([encoder.finish()]);
-                progress
-                    .max_submit_us
-                    .fetch_max(submit_start.elapsed().as_micros() as u64, Ordering::Relaxed);
+                let submission = queue.submit([command]);
+                progress.timings.record(3, submit_start, Instant::now());
                 progress.submitted.fetch_add(1, Ordering::Relaxed);
-                progress.phase.store(3, Ordering::Relaxed);
+                progress.set_phase(3);
                 // Bound producer work to one completed GPU frame before submitting another.
                 let wait_start = Instant::now();
                 // Wait only for this producer frame, not a later viewport submission.
                 let _ = device.poll(wgpu::Maintain::WaitForSubmissionIndex(submission));
-                progress
-                    .max_wait_us
-                    .fetch_max(wait_start.elapsed().as_micros() as u64, Ordering::Relaxed);
+                progress.timings.record(4, wait_start, Instant::now());
                 progress.completed.fetch_add(1, Ordering::Relaxed);
-                progress.phase.store(4, Ordering::Relaxed);
+                progress.set_phase(4);
+                let notify_start = Instant::now();
                 frame_ready();
-                progress.phase.store(0, Ordering::Relaxed);
+                progress.timings.record(5, notify_start, Instant::now());
+                progress.set_phase(0);
                 deadline += period;
                 if deadline < Instant::now() {
                     deadline = Instant::now() + period;
