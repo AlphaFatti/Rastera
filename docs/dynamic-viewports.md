@@ -1,5 +1,7 @@
 # Dynamic viewports — review milestone
 
+Assigned-display destinations and schema 4 now extend this milestone: see [display outputs](display-outputs.md). Earlier sizing/mapping results and limitations below are retained.
+
 October 29, 2026. `feature/dynamic-viewports`, based on `fix/viewport-selection` at `4ee19523a890808e8a80a897205e4500884a1067`. First-canvas acceptance remains pending. This changes logical mapping and lifecycle; it does not fix the operator UI transition pause or add fullscreen/display assignment.
 
 ## Run and controls

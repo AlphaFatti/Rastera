@@ -186,7 +186,7 @@ fn v1_v2_migration_and_empty_custom_round_trips() {
         }
         std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
         let loaded = scene::load_project(&path).unwrap();
-        assert_eq!(loaded.version, 3);
+        assert_eq!(loaded.version, 4);
         assert_eq!(loaded.next_viewport_id, 3);
         assert_eq!(loaded.viewports[0].size, [1920, 1080]);
         assert_eq!(loaded.layers, doc.layers);
@@ -269,4 +269,32 @@ fn footprint_scale_changes_coverage_without_changing_resolution() {
     assert_eq!(v.size, [1920, 1080]);
     assert_eq!(q[1][0] - q[0][0], 960.);
     assert_eq!(q[3][1] - q[0][1], 540.);
+}
+
+#[test]
+fn v3_identity_migration_preserves_sampling_and_v4_identity_roundtrips() {
+    let folder = std::env::temp_dir().join(format!("rastera-v4-migration-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("show.json");
+    let mut original = Document::default();
+    original.viewports[0].size = [960, 192];
+    original.viewports[0].zoom = 0.75;
+    original.viewports[0].rotation = 30.;
+    assert_ne!(original.project_id, Document::default().project_id);
+    let mut value = serde_json::to_value(&original).unwrap();
+    value["version"] = 3.into();
+    value.as_object_mut().unwrap().remove("project_id");
+    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    let migrated = scene::load_project(&path).unwrap();
+    assert_eq!(migrated.version, 4);
+    assert_eq!(migrated.viewports, original.viewports);
+    assert_eq!(migrated.next_viewport_id, original.next_viewport_id);
+    assert_eq!(migrated.project_id.len(), 32);
+    scene::save_project(&migrated, &path).unwrap();
+    assert_eq!(scene::load_project(&path).unwrap(), migrated);
+    value = serde_json::to_value(migrated).unwrap();
+    value["project_id"] = "invalid".into();
+    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(scene::load_project(&path).is_err());
+    std::fs::remove_dir_all(folder).unwrap();
 }

@@ -140,6 +140,9 @@ enum Action {
 pub(super) struct Editor {
     pub engine: SceneEngine,
     pub doc: Document,
+    pub(super) destinations: super::destinations::Destinations,
+    output_project_reload: bool,
+    pub(super) output_disable_requested: bool,
     selected: Option<Id>,
     history: History,
     gesture: Option<Gesture>,
@@ -175,6 +178,9 @@ impl Editor {
         let revision = engine.submit(doc.clone());
         let mut editor = Self {
             engine,
+            destinations: super::destinations::Destinations::new(),
+            output_project_reload: false,
+            output_disable_requested: false,
             library,
             mode: Mode::Canvas,
             viewport_selected: Some(1),
@@ -223,8 +229,14 @@ impl Editor {
         self.pending_load = Some((revision, path.unwrap_or_default(), doc));
     }
     fn file_job(&mut self, job: FileJob) {
+        let loading = matches!(&job, FileJob::Load(_));
         match self.files.tx.try_send(job) {
-            Ok(()) => self.busy_file = true,
+            Ok(()) => {
+                self.busy_file = true;
+                if loading {
+                    self.output_disable_requested = true;
+                }
+            }
             Err(_) => self.error = Some("File worker is busy; retry after it completes".into()),
         }
     }
@@ -301,6 +313,7 @@ impl Editor {
                 self.history = History::default();
                 self.saved = Some(self.doc.clone());
                 self.project = Some(path.clone());
+                self.output_project_reload = true;
                 log(format!("editor_loaded path={}\n", path.display()));
             } else if let Some(history) = self.pending_history.take() {
                 self.history = history;
@@ -570,6 +583,12 @@ impl Editor {
         outputs: &mut std::collections::BTreeSet<u64>,
     ) -> egui::Rect {
         self.poll();
+        self.destinations.context(
+            &self.doc.project_id,
+            self.project.as_deref(),
+            std::mem::take(&mut self.output_project_reload),
+            outputs,
+        );
         mapping::apply_theme(ctx);
         let mut action = None;
         let loading = self.busy_file
@@ -579,6 +598,13 @@ impl Editor {
         egui::TopBottomPanel::top("editor_toolbar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.strong("Live Edit — changes affect outputs");
+                if ui.button("Disable All Outputs · ⌘⇧Esc").clicked() {
+                    unsafe { super::rastera_outputs_disable_all() };
+                    outputs.clear();
+                }
+                if let Some(error) = &self.destinations.error {
+                    ui.colored_label(egui::Color32::YELLOW, error);
+                }
                 if ui
                     .add_enabled(!loading, egui::Button::new("Settings ▾"))
                     .clicked()

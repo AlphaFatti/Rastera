@@ -392,7 +392,13 @@ impl Dynamic {
                     e.doc == *self.before.as_ref().unwrap(),
                     "Dynamic project round trip changed definitions",
                 )?;
-                self.unchanged(outputs, 0)?;
+                check(
+                    open.is_empty(),
+                    "Project reopening retained enabled outputs",
+                )?;
+                if !outputs.is_empty() {
+                    return Ok(false);
+                }
                 while e.doc.viewports.len() < MAX_VIEWPORTS {
                     e.add_viewport();
                     check(

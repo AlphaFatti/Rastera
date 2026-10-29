@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "canvas": [
     3840,
     1080
@@ -151,5 +151,6 @@
   "images": {},
   "texts": {},
   "layers": [],
-  "next_viewport_id": 10
+  "next_viewport_id": 10,
+  "project_id": "d15f1a70000000000000000000000001"
 }

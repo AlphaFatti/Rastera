@@ -123,6 +123,7 @@ struct OverlayLabel {float x,y;const char *text;float color[4];};
 - (void)viewDidChangeBackingProperties { [super viewDidChangeBackingProperties]; [self resizeDrawable]; }
 - (void)viewDidMoveToWindow { [super viewDidMoveToWindow]; [self resizeDrawable]; }
 @end
+ #include "display_outputs.inc"
 API_AVAILABLE(macos(14.0))
 @interface SharedCanvasConsumer : NSObject <NSWindowDelegate,CAMetalDisplayLinkDelegate> {
     NSWindow *_window;
@@ -137,19 +138,25 @@ API_AVAILABLE(macos(14.0))
     uint32_t _sizedLogical[2];
     uint32_t _lastWidth,_lastHeight,_lastLogical[2]; float _lastMaps[8];
     std::atomic<float> _margin;
-    BOOL _closed;
+    BOOL _closed,_fullscreen;
+    NSRect _windowedFrame;
+    NSString *_destinationDisplay;
     std::shared_ptr<Stats> _stats;
     std::thread _worker;
     dispatch_semaphore_t _slots;
     dispatch_group_t _work;
 }
-- (BOOL)start:(void *)source host:(NSView *)host viewport:(uint64_t)viewportID;
+- (BOOL)start:(void *)source host:(NSView *)host viewport:(uint64_t)viewportID deferShow:(BOOL)deferShow;
 - (void)stop;
 - (BOOL)isOpen;
 - (uint32_t)inflightForProbe;
+- (uint64_t)errorCount;
 - (uint64_t)instanceForProbe;
 - (BOOL)pendingReadForProbe;
 - (void)syncWindowSize;
+- (BOOL)destination:(NSString *)display;
+- (char *)presentationForProbe;
+- (void)focusForProbe;
 - (void)editorRect:(const float *)rect screen:(const float *)screen selection:(const float *)selected flags:(uint32_t)flags;
 - (BOOL)pollPointer:(EditorPointer *)out;
 - (void)replay:(uint32_t)kind x:(float)x y:(float)y modifiers:(uint64_t)modifiers;
@@ -163,7 +170,7 @@ API_AVAILABLE(macos(14.0))
 // AppKit-only sizing; acquire immutable completed metadata, never wait for GPU work.
 - (void)syncWindowSize {
     NSCAssert(NSThread.isMainThread,@"Window sizing on main");
-    if(_embedded||_closed)return;
+    if(_embedded||_closed||_fullscreen)return;
     SharedFrame frame{};
     if(!rastera_shared_acquire(_source,&frame))return;
     const FrameViewport *v=viewportFor(frame,_viewportID);
@@ -174,10 +181,53 @@ API_AVAILABLE(macos(14.0))
     // Use AppKit's backing conversion rather than assuming a Retina scale factor.
     NSRect points=[_window convertRectFromBacking:NSMakeRect(0,0,w,h)];
     [_window setContentSize:points.size];
+    // Retain pixel size while keeping the title bar and, when it fits, the picture reachable.
+    NSScreen *screen=_window.screen?:NSScreen.mainScreen;
+    if(screen){NSRect frame=_window.frame,available=screen.visibleFrame;
+        frame.origin.x=std::max(available.origin.x,std::min(frame.origin.x,NSMaxX(available)-frame.size.width));
+        frame.origin.y=std::min(NSMaxY(available)-frame.size.height,std::max(available.origin.y,frame.origin.y));
+        [_window setFrame:frame display:YES];
+    }
     [_view resizeDrawable];
     NSRect backing=[_view convertRectToBacking:_view.bounds];
     std::fprintf(stderr,"shared_window_size viewport_id=%llu logical_w=%u logical_h=%u backing_w=%.0f backing_h=%.0f points_w=%.3f points_h=%.3f exact=%d main_thread=1\n",(unsigned long long)_viewportID,w,h,backing.size.width,backing.size.height,_view.bounds.size.width,_view.bounds.size.height,int(std::abs(backing.size.width-w)<0.5&&std::abs(backing.size.height-h)<0.5));
 }
+- (BOOL)destination:(NSString *)display {
+    NSCAssert(NSThread.isMainThread,@"Destination changes on main");
+    if(_embedded||_closed)return NO;
+    NSWindow *operatorKey=NSApp.keyWindow;
+    if(display.length){
+        NSScreen *screen=ResolveDisplay(display);if(!screen)return NO;
+        if(_fullscreen&&[_destinationDisplay isEqual:display]&&NSEqualRects(_window.frame,screen.frame))return YES;
+        if(!_fullscreen){_windowedFrame=_window.frame;_fullscreen=YES;}
+        _destinationDisplay=[display copy];objc_setAssociatedObject(_window,&outputDisplayKey,_destinationDisplay,OBJC_ASSOCIATION_COPY_NONATOMIC);
+        _window.styleMask=NSWindowStyleMaskBorderless;_window.level=NSStatusWindowLevel+1;
+        _window.hasShadow=NO;_window.ignoresMouseEvents=YES;_window.hidesOnDeactivate=NO;_window.canHide=NO;
+        _window.collectionBehavior=NSWindowCollectionBehaviorCanJoinAllSpaces|NSWindowCollectionBehaviorCanJoinAllApplications|NSWindowCollectionBehaviorStationary;
+        if(!NSEqualRects(_window.frame,screen.frame))[_window setFrame:screen.frame display:YES];
+        [_view resizeDrawable];[_window orderFrontRegardless];
+    }else if(_fullscreen){
+        _fullscreen=NO;_destinationDisplay=nil;objc_setAssociatedObject(_window,&outputDisplayKey,nil,OBJC_ASSOCIATION_COPY_NONATOMIC);
+        _window.styleMask=NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable;
+        _window.level=NSNormalWindowLevel;_window.hasShadow=YES;_window.ignoresMouseEvents=NO;_window.canHide=YES;
+        _window.collectionBehavior=NSWindowCollectionBehaviorDefault;
+        BOOL reachable=NO;
+        NSRect title=NSMakeRect(_windowedFrame.origin.x,NSMaxY(_windowedFrame)-22,_windowedFrame.size.width,22);
+        for(NSScreen *screen in NSScreen.screens)if(NSIntersectsRect(title,screen.visibleFrame)){reachable=YES;break;}
+        if(!reachable&&NSScreen.mainScreen){NSRect available=NSScreen.mainScreen.visibleFrame;_windowedFrame.origin=NSMakePoint(available.origin.x+20,NSMaxY(available)-_windowedFrame.size.height-20);_sizedLogical[0]=0;}
+        [_window setFrame:_windowedFrame display:YES];[self syncWindowSize];[_window orderFront:nil];
+    }
+    if(operatorKey&&operatorKey!=_window&&operatorKey.canBecomeKeyWindow)[operatorKey makeKeyWindow];
+    return YES;
+}
+- (void)focusForProbe {if(_embedded){for(NSString *arg in NSProcessInfo.processInfo.arguments)if([arg isEqual:@"--display-probe"]){[NSApp activate];[_window makeKeyAndOrderFront:nil];break;}}}
+- (char *)presentationForProbe {
+    NSCAssert(NSThread.isMainThread,@"Presentation assertions on main");
+    NSRect f=_window.frame;CGSize d=_layer.drawableSize;
+    NSDictionary *state=@{@"fullscreen":@(_fullscreen),@"frame":@[@(f.origin.x),@(f.origin.y),@(f.size.width),@(f.size.height)],@"drawable":@[@(d.width),@(d.height)],@"level":@(_window.level),@"key":@(_window.isKeyWindow),@"key_number":@(NSApp.keyWindow.windowNumber),@"number":@(_window.windowNumber),@"visible":@(_window.isVisible),@"mouse_ignored":@(_window.ignoresMouseEvents),@"spaces":@(_window.collectionBehavior)};
+    NSData *json=[NSJSONSerialization dataWithJSONObject:state options:0 error:nil];return strdup([[NSString alloc]initWithData:json encoding:NSUTF8StringEncoding].UTF8String);
+}
+- (uint64_t)errorCount {return _stats->errors.load();}
 - (uint64_t)instanceForProbe {return _stats->instance;}
 - (uint32_t)inflightForProbe {return _stats->inflight.load();}
 // Diagnostic-only actual GPU reader. The normal render/present callback is unchanged.
@@ -210,7 +260,7 @@ API_AVAILABLE(macos(14.0))
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,50*NSEC_PER_MSEC),dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{event.signaledValue=1;});
     return YES;
 }
-- (BOOL)start:(void *)source host:(NSView *)host viewport:(uint64_t)viewportID {
+- (BOOL)start:(void *)source host:(NSView *)host viewport:(uint64_t)viewportID deferShow:(BOOL)deferShow {
     NSCAssert(NSThread.isMainThread,@"Lifecycle on main");
     _margin.store(0);_viewportID=viewportID;_source=source; _embedded=host!=nil;
     _stats=std::make_shared<Stats>(viewportID);
@@ -259,7 +309,7 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
         _view.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
         [host addSubview:_view];
     } else {
-        _window=[[NSWindow alloc] initWithContentRect:NSMakeRect(20+((viewportID-1)%4)*350,120,480,std::clamp(480.*logicalHeight/logicalWidth,80.,540.))
+        _window=[[RasteraCleanWindow alloc] initWithContentRect:NSMakeRect(20+((viewportID-1)%4)*350,120,480,std::clamp(480.*logicalHeight/logicalWidth,80.,540.))
             styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable
             backing:NSBackingStoreBuffered defer:NO];
         _window.title=[NSString stringWithFormat:@"Rastera — Native clean output — %@",viewportID==1?@"Left":viewportID==2?@"Right":[NSString stringWithFormat:@"Viewport %llu",(unsigned long long)viewportID]];
@@ -274,7 +324,8 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
     _layer.allowsNextDrawableTimeout=YES;
     if(!_embedded) {
         BOOL replay=NO;for(NSString *arg in NSProcessInfo.processInfo.arguments)if([arg hasPrefix:@"--editor-probe="])replay=YES;
-        if(replay){_window.title=[_window.title stringByAppendingString:@" (automated probe)"];[_window orderFront:nil];}else [_window makeKeyAndOrderFront:nil];
+        if(replay)_window.title=[_window.title stringByAppendingString:@" (automated probe)"];
+        [OutputWindows() addObject:_window];if(!deferShow)[_window orderFront:nil];
     }
     [self syncWindowSize];
     [_view resizeDrawable];
@@ -424,10 +475,10 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
 - (void)detach { [self stop]; if(!_embedded) { _window.delegate=nil; [_window close]; } [_view removeFromSuperview]; }
 - (void)dealloc { NSCAssert(!_worker.joinable(),@"Must stop before release"); }
 @end
-extern "C" void *rastera_shared_create(void *source,void *host,uint64_t viewportID) {
+extern "C" void *rastera_shared_create(void *source,void *host,uint64_t viewportID,bool deferShow) {
     if(@available(macOS 14.0,*)) {
         SharedCanvasConsumer *consumer=[SharedCanvasConsumer new];
-        if(![consumer start:source host:(__bridge NSView *)host viewport:viewportID]) return nullptr;
+        if(![consumer start:source host:(__bridge NSView *)host viewport:viewportID deferShow:deferShow]) return nullptr;
         return (__bridge_retained void *)consumer;
     }
     return nullptr;
@@ -522,3 +573,12 @@ extern "C" uint64_t rastera_shared_instance(void *handle){if(@available(macOS 14
 extern "C" bool rastera_shared_pending_read_probe(void *handle){if(@available(macOS 14.0,*)){return [(__bridge SharedCanvasConsumer *)handle pendingReadForProbe];}return false;}
 
 extern "C" void rastera_shared_sync_window_size(void *handle){if(@available(macOS 14.0,*)){[(__bridge SharedCanvasConsumer *)handle syncWindowSize];}}
+
+extern "C" bool rastera_shared_destination(void *handle,const char *display){if(@available(macOS 14.0,*)){return [(__bridge SharedCanvasConsumer *)handle destination:@(display)];}return false;}
+
+extern "C" char *rastera_shared_presentation_probe(void *handle){if(@available(macOS 14.0,*)){return [(__bridge SharedCanvasConsumer *)handle presentationForProbe];}return nullptr;}
+extern "C" void rastera_shared_recovery_probe(){NSCAssert(NSThread.isMainThread,@"Local recovery replay on main");NSEvent *event=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:NSEventModifierFlagCommand|NSEventModifierFlagShift timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:NSApp.keyWindow.windowNumber context:nil characters:@"\033" charactersIgnoringModifiers:@"\033" isARepeat:NO keyCode:53];[NSApp postEvent:event atStart:NO];}
+
+extern "C" void rastera_shared_focus_probe(void *handle){if(@available(macOS 14.0,*)){[(__bridge SharedCanvasConsumer *)handle focusForProbe];}}
+
+extern "C" uint64_t rastera_shared_errors(void *handle){if(@available(macOS 14.0,*)){return [(__bridge SharedCanvasConsumer *)handle errorCount];}return 0;}

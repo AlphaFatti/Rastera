@@ -1,3 +1,5 @@
+#[path = "outputs.rs"]
+mod destinations;
 #[path = "editor.rs"]
 mod editor;
 use eframe::egui;
@@ -38,10 +40,19 @@ unsafe extern "C" {
         source: *mut c_void,
         host: *mut c_void,
         viewport_id: u64,
+        defer_show: bool,
     ) -> *mut c_void;
     fn rastera_shared_destroy(handle: *mut c_void);
+    fn rastera_shared_errors(handle: *mut c_void) -> u64;
     fn rastera_shared_is_open(handle: *mut c_void) -> bool;
     fn rastera_shared_report();
+    fn rastera_displays_json() -> *mut c_char;
+    fn rastera_editor_free_string(value: *mut c_char);
+    fn rastera_identify_displays();
+    fn rastera_outputs_disable_all();
+    fn rastera_outputs_hide_all();
+    fn rastera_outputs_take_disable() -> bool;
+    fn rastera_shared_destination(handle: *mut c_void, display: *const c_char) -> bool;
     fn rastera_shared_sync_window_size(handle: *mut c_void);
     fn rastera_shared_title(handle: *mut c_void, name: *const c_char);
     fn rastera_shared_host_time() -> f64;
@@ -141,9 +152,17 @@ struct Consumer {
 }
 impl Consumer {
     fn new(pool: &Arc<Pool>, host: *mut c_void, viewport_id: u64) -> std::io::Result<Self> {
+        Self::new_deferred(pool, host, viewport_id, false)
+    }
+    fn new_deferred(
+        pool: &Arc<Pool>,
+        host: *mut c_void,
+        viewport_id: u64,
+        defer_show: bool,
+    ) -> std::io::Result<Self> {
         let source = Box::into_raw(Box::new(pool.clone()));
         // SAFETY: called on eframe main; host is either the live AppKit view or nil.
-        let handle = unsafe { rastera_shared_create(source.cast(), host, viewport_id) };
+        let handle = unsafe { rastera_shared_create(source.cast(), host, viewport_id, defer_show) };
         match NonNull::new(handle) {
             Some(handle) => Ok(Self {
                 handle,
@@ -179,6 +198,8 @@ struct App {
     outputs: BTreeMap<u64, Consumer>,
     open_outputs: BTreeSet<u64>,
     initial_output_count: Option<usize>,
+    active_destinations: BTreeMap<u64, destinations::Destination>,
+    display_refresh: Instant,
     producer: Option<SharedCanvasProducer>,
     stop: mpsc::Sender<()>,
     monitor: Option<thread::JoinHandle<()>>,
@@ -189,6 +210,61 @@ struct App {
 }
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        // Native recovery hides immediately even before the next eframe callback.
+        if unsafe { rastera_outputs_take_disable() } {
+            self.open_outputs.clear();
+            self.initial_output_count = None;
+        }
+        if let Some(editor) = &mut self.editor {
+            if self.display_refresh.elapsed() > Duration::from_secs(1)
+                || editor.destinations.refresh
+            {
+                editor.destinations.refresh = false;
+                self.display_refresh = Instant::now();
+                let raw = unsafe { rastera_displays_json() };
+                if !raw.is_null() {
+                    let parsed = unsafe {
+                        serde_json::from_slice::<destinations::Discovery>(
+                            std::ffi::CStr::from_ptr(raw).to_bytes(),
+                        )
+                    };
+                    unsafe { rastera_editor_free_string(raw) };
+                    match parsed {
+                        Ok(discovery) => {
+                            editor.destinations.discovery = discovery;
+                            let recovered: Vec<_> = editor
+                                .destinations
+                                .status
+                                .iter()
+                                .filter(|(id, status)| {
+                                    status.starts_with("Missing")
+                                        && editor.destinations.preferences.get(id).is_some_and(
+                                            |d| {
+                                                destinations::resolve(
+                                                    d,
+                                                    &editor.destinations.discovery.displays,
+                                                )
+                                                .is_ok()
+                                            },
+                                        )
+                                })
+                                .map(|(&id, _)| id)
+                                .collect();
+                            for id in recovered {
+                                editor.destinations.status.remove(&id);
+                            }
+                            if editor.destinations.discovery.machine.is_empty() {
+                                editor.destinations.error=Some("Machine identity unavailable; destination preferences cannot be persisted".into());
+                            }
+                        }
+                        Err(e) => {
+                            log(format!("display_discovery error={e}\n"));
+                            editor.destinations.error = Some(format!("Display discovery: {e}"))
+                        }
+                    }
+                }
+            }
+        }
         let now = Instant::now();
         let gap = now.duration_since(self.previous);
         self.previous = now;
@@ -211,8 +287,26 @@ impl eframe::App for App {
             .map(|(&id, _)| id)
             .collect();
         for id in closed {
+            let failed = self
+                .outputs
+                .get(&id)
+                .is_some_and(|c| unsafe { rastera_shared_errors(c.handle.as_ptr()) } > 0);
+            if failed {
+                if let Some(editor) = &mut self.editor {
+                    editor.destinations.status.insert(
+                        id,
+                        "Error: native GPU output stopped; re-enable explicitly".into(),
+                    );
+                }
+            }
             self.outputs.remove(&id);
             self.open_outputs.remove(&id);
+            self.active_destinations.remove(&id);
+            if let Some(editor) = &mut self.editor {
+                if !failed {
+                    editor.destinations.status.remove(&id);
+                }
+            }
         }
         let definitions = if let Some(editor) = &mut self.editor {
             if let Some(preview) = &self.preview {
@@ -225,6 +319,14 @@ impl eframe::App for App {
                     editor.settings_menu(preview);
                 }
                 editor.probe_tick(preview, &self.outputs, &mut self.open_outputs);
+            }
+            if std::mem::take(&mut editor.output_disable_requested) {
+                self.open_outputs.clear();
+                unsafe { rastera_outputs_hide_all() };
+            }
+            if unsafe { rastera_outputs_take_disable() } {
+                self.open_outputs.clear();
+                self.initial_output_count = None;
             }
             editor
                 .doc
@@ -247,6 +349,28 @@ impl eframe::App for App {
                 .into_iter()
                 .collect()
         };
+        if let Some(editor) = &mut self.editor {
+            if editor.destinations.identify {
+                editor.destinations.identify = false;
+                unsafe { rastera_identify_displays() };
+            }
+            let requests = destinations::plan(
+                &editor.destinations.preferences,
+                &self.open_outputs,
+                &self.active_destinations,
+                &editor.destinations.discovery.displays,
+            );
+            for (id, result) in requests {
+                if let Err(error) = result {
+                    self.open_outputs.remove(&id);
+                    editor.destinations.status.insert(id, error);
+                }
+            }
+            editor
+                .destinations
+                .status
+                .retain(|id, status| self.open_outputs.contains(id) || status != "Active");
+        }
         // Removal, window close and project edits never reassign a consumer by position.
         self.open_outputs.retain(|id| definitions.contains_key(id));
         let closed: Vec<_> = self
@@ -256,17 +380,44 @@ impl eframe::App for App {
             .map(|(&id, _)| id)
             .collect();
         for id in closed {
+            let failed = self
+                .outputs
+                .get(&id)
+                .is_some_and(|c| unsafe { rastera_shared_errors(c.handle.as_ptr()) } > 0);
+            if failed {
+                if let Some(editor) = &mut self.editor {
+                    editor.destinations.status.insert(
+                        id,
+                        "Error: native GPU output stopped; re-enable explicitly".into(),
+                    );
+                }
+            }
             self.outputs.remove(&id);
             self.open_outputs.remove(&id);
         }
+        self.active_destinations
+            .retain(|id, _| self.open_outputs.contains(id));
         self.outputs.retain(|id, _| self.open_outputs.contains(id)); // Drop joins/drains GPU readers.
         if self.initial_output_count.is_some()
             && self.editor.as_ref().is_some_and(|e| !e.busy_loading())
         {
             let count = self.initial_output_count.take().unwrap();
             if let Some(editor) = &self.editor {
-                self.open_outputs
-                    .extend(editor.doc.viewports.iter().take(count).map(|v| v.id));
+                self.open_outputs.extend(
+                    editor
+                        .doc
+                        .viewports
+                        .iter()
+                        .filter(|v| {
+                            !editor
+                                .destinations
+                                .preferences
+                                .get(&v.id)
+                                .is_some_and(|d| d.fullscreen)
+                        })
+                        .take(count)
+                        .map(|v| v.id),
+                );
             }
         }
         let pool = &self.producer.as_ref().unwrap().pool;
@@ -280,7 +431,17 @@ impl eframe::App for App {
                 {
                     continue;
                 }
-                match Consumer::new(pool, std::ptr::null_mut(), id) {
+                match Consumer::new_deferred(
+                    pool,
+                    std::ptr::null_mut(),
+                    id,
+                    self.editor.as_ref().is_some_and(|e| {
+                        e.destinations
+                            .preferences
+                            .get(&id)
+                            .is_some_and(|d| d.fullscreen)
+                    }),
+                ) {
                     Ok(c) => {
                         entry.insert(c);
                     }
@@ -288,6 +449,10 @@ impl eframe::App for App {
                         failures.push(id);
                         if let Some(editor) = &mut self.editor {
                             editor.error = Some(format!("Could not open viewport {id}: {error}"));
+                            editor
+                                .destinations
+                                .status
+                                .insert(id, format!("Error opening native output: {error}"));
                         }
                         log(format!(
                             "shared_error open_viewport_id={id} message={error}\n"
@@ -299,7 +464,33 @@ impl eframe::App for App {
         for id in failures {
             self.open_outputs.remove(&id);
         }
-        for (&id, out) in self.outputs.iter().filter(|_| self.editor.is_some()) {
+        let mut destination_errors = Vec::new();
+        let editor_mode = self.editor.is_some();
+        for (&id, out) in self.outputs.iter().filter(|_| editor_mode) {
+            if let Some(editor) = &mut self.editor {
+                let d = editor
+                    .destinations
+                    .preferences
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_default();
+                let target = CString::new(if d.fullscreen {
+                    d.display.clone().unwrap_or_default()
+                } else {
+                    String::new()
+                })
+                .unwrap();
+                if unsafe { rastera_shared_destination(out.handle.as_ptr(), target.as_ptr()) } {
+                    self.active_destinations.insert(id, d);
+                    editor.destinations.status.insert(id, "Active".into());
+                } else {
+                    editor.destinations.status.insert(
+                        id,
+                        "Error: native display placement failed; re-enable explicitly".into(),
+                    );
+                    destination_errors.push(id);
+                }
+            }
             if let Some(name) = definitions.get(&id) {
                 let name = CString::new(name.replace('\0', "")).unwrap();
                 unsafe {
@@ -307,6 +498,11 @@ impl eframe::App for App {
                     rastera_shared_sync_window_size(out.handle.as_ptr());
                 }
             }
+        }
+        for id in destination_errors {
+            self.open_outputs.remove(&id);
+            self.active_destinations.remove(&id);
+            self.outputs.remove(&id);
         }
     }
 }
@@ -370,18 +566,19 @@ fn run_mode(editor_mode: bool) -> eframe::Result {
         thread::sleep(Duration::from_millis(5));
     }
     let probing = std::env::args().any(|a| a.starts_with("--editor-probe="));
+    let display_probing = std::env::args().any(|a| a == "--display-probe");
     let options = eframe::NativeOptions {
         event_loop_builder: probing.then(|| {
             Box::new(
-                |builder: &mut winit::event_loop::EventLoopBuilder<eframe::UserEvent>| {
+                move |builder: &mut winit::event_loop::EventLoopBuilder<eframe::UserEvent>| {
                     use winit::platform::macos::EventLoopBuilderExtMacOS;
-                    builder.with_activate_ignoring_other_apps(false);
+                    builder.with_activate_ignoring_other_apps(display_probing);
                 },
             ) as _
         }),
         renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
-            .with_active(!probing)
+            .with_active(!probing || display_probing)
             .with_inner_size(if editor_mode {
                 [1320., 760.]
             } else {
@@ -423,7 +620,7 @@ fn run_mode(editor_mode: bool) -> eframe::Result {
             let preview = Consumer::new(&producer.pool, host, 0)?;
             let count: usize = std::env::args()
                 .find_map(|a| a.strip_prefix("--outputs=").map(str::to_owned))
-                .unwrap_or_else(|| "2".into())
+                .unwrap_or_else(|| if editor_mode { "0".into() } else { "2".into() })
                 .parse()?;
             if count > rastera_core::mapping::MAX_VIEWPORTS {
                 return Err("--outputs exceeds viewport limit 8".into());
@@ -470,6 +667,8 @@ fn run_mode(editor_mode: bool) -> eframe::Result {
                 outputs,
                 open_outputs,
                 initial_output_count,
+                active_destinations: BTreeMap::new(),
+                display_refresh: Instant::now(),
                 producer: Some(producer),
                 stop,
                 monitor: Some(monitor),

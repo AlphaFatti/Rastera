@@ -1,5 +1,7 @@
 //! Explicit, noninteractive native replay for busy test desktops. No system input.
 use super::*;
+#[path = "editor_display_probe.rs"]
+mod display;
 #[path = "editor_dynamic_probe.rs"]
 mod dynamic;
 unsafe extern "C" {
@@ -21,10 +23,14 @@ pub(super) struct Probe {
     mapping: bool,
     selection: bool,
     dynamic: Option<dynamic::Dynamic>,
+    display: Option<display::DisplayProbe>,
 }
 impl Probe {
     pub fn new(folder: PathBuf) -> Self {
         Self {
+            display: std::env::args()
+                .any(|a| a == "--display-probe")
+                .then(|| display::DisplayProbe::new(folder.clone())),
             dynamic: std::env::args()
                 .any(|a| a == "--dynamic-probe")
                 .then(|| dynamic::Dynamic::new(folder.clone())),
@@ -55,6 +61,16 @@ impl Probe {
     ) -> bool {
         if e.busy_file || e.pending_load.is_some() || e.engine.applied() != e.revision {
             return false;
+        }
+        if let Some(display) = &mut self.display {
+            return match display.tick(e, preview, outputs, enabled) {
+                Ok(done) => done,
+                Err(error) => {
+                    log(format!("display_output_probe failed=1 error={error}\n"));
+                    e.error = Some(error);
+                    true
+                }
+            };
         }
         if let Some(dynamic) = &mut self.dynamic {
             return match dynamic.tick(e, preview, outputs, enabled) {
@@ -238,6 +254,10 @@ impl Probe {
             }
             26 => e.file_job(FileJob::Load(self.folder.join("result.rastera.json"))),
             27 => {
+                if !outputs.contains_key(&1) || !outputs.contains_key(&2) {
+                    enabled.extend([1, 2]);
+                    return Ok(false);
+                }
                 check(
                     e.doc == *self.before.as_ref().unwrap(),
                     "Off-canvas project round trip changed document",
@@ -437,6 +457,10 @@ impl Probe {
             }
             49 => e.file_job(FileJob::Load(self.folder.join("mapping.rastera.json"))),
             50 => {
+                if !outputs.contains_key(&1) || !outputs.contains_key(&2) {
+                    enabled.extend([1, 2]);
+                    return Ok(false);
+                }
                 check(
                     e.doc == *self.before.as_ref().unwrap(),
                     "Custom canvas/font/mapping project round trip failed",

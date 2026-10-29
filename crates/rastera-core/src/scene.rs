@@ -75,6 +75,7 @@ pub struct Layer {
 #[serde(deny_unknown_fields)]
 pub struct Document {
     pub version: u32,
+    pub project_id: String,
     pub canvas: [u32; 2],
     pub viewports: Vec<crate::mapping::Viewport>,
     pub next_viewport_id: u64,
@@ -85,10 +86,17 @@ pub struct Document {
     /// Bottom to top. Layer IDs remain stable through edits/reordering/save/load.
     pub layers: Vec<Layer>,
 }
+/// Portable document identity; destinations themselves are machine-local, never in this model.
+fn new_project_id() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("OS entropy required to allocate a unique project identity");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
 impl Default for Document {
     fn default() -> Self {
         Self {
-            version: 3,
+            version: 4,
+            project_id: new_project_id(),
             canvas: [WIDTH, HEIGHT],
             viewports: crate::mapping::defaults(),
             next_viewport_id: 3,
@@ -280,8 +288,11 @@ impl Document {
             .map(|l| l.id)
     }
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != 3 {
-            return Err("Unsupported project version (expected v3)".into());
+        if self.version != 4 {
+            return Err("Unsupported project version (expected v4)".into());
+        }
+        if self.project_id.len() != 32 || !self.project_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("Invalid project identity".into());
         }
         crate::mapping::validate_canvas(self.canvas, 8192)?;
         let mut viewport_ids = BTreeSet::new();
@@ -602,10 +613,10 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
             value["viewports"] = serde_json::to_value(crate::mapping::defaults()).unwrap();
         }
         Some(2) => {}
-        Some(3) => {}
+        Some(3) | Some(4) => {}
         _ => return Err("Unsupported project schema version".into()),
     }
-    if value["version"].as_u64() != Some(3) {
+    if value["version"].as_u64().is_some_and(|v| v < 3) {
         let viewports = value["viewports"]
             .as_array_mut()
             .ok_or("Missing legacy viewport list")?;
@@ -624,6 +635,12 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
             .ok_or("Viewport ID allocator overflow")?
             .into();
         value["version"] = 3.into();
+    }
+    if value["version"].as_u64() != Some(4) {
+        if value.get("project_id").is_none() {
+            value["project_id"] = new_project_id().into();
+        }
+        value["version"] = 4.into();
     }
     let mut doc: Document = serde_json::from_value(value).map_err(|e| e.to_string())?;
     doc.validate()?;
@@ -934,7 +951,7 @@ mod tests {
         assert!(saved.contains("../alpha.png"));
         assert_eq!(load_project(&path).unwrap(), doc);
         let bad = base.join("bad.json");
-        std::fs::write(&bad, saved.replace("\"version\": 3", "\"version\": 99")).unwrap();
+        std::fs::write(&bad, saved.replace("\"version\": 4", "\"version\": 99")).unwrap();
         assert!(load_project(&bad).is_err());
         std::fs::remove_file(&media).unwrap();
         assert!(load_project(&path).unwrap_err().contains("alpha.png"));

@@ -1794,6 +1794,7 @@ name = "rastera-core"
 version = "0.1.0"
 dependencies = [
  "epaint",
+ "getrandom",
  "image",
  "serde",
  "serde_json",
@@ -1810,6 +1811,7 @@ dependencies = [
  "pollster",
  "rastera-core",
  "raw-window-handle",
+ "serde",
  "serde_json",
  "wgpu",
  "winit",

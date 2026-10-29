@@ -5,6 +5,7 @@ fn run(command: &mut Command) {
 }
 fn main() {
     println!("cargo:rerun-if-changed=native/shared_canvas.mm");
+    println!("cargo:rerun-if-changed=native/display_outputs.inc");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return;
     }
@@ -39,6 +40,7 @@ fn main() {
     println!("cargo:rustc-link-lib=static=rastera_shared_canvas");
     for framework in [
         "AppKit",
+        "IOKit",
         "QuartzCore",
         "Metal",
         "Foundation",

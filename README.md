@@ -22,7 +22,19 @@ Try all seven output presets (first four windows open initially):
 cargo run --release --locked -p rastera-desktop --bin canvas-editor -- --project=examples/dynamic-viewports.rastera.json --outputs=4
 ```
 
-Add/Remove Selected and each viewport’s Open clean output control are in Viewports mode. Closing a window preserves its logical definition. Undoing deletion restores the definition with its original ID, without reopening the window. Projects save as schema 3; versions 1/2 migrate explicitly with original HD output dimensions. Saved empty viewport lists stay empty. Fullscreen and physical-display assignment remain future work.
+Add/Remove Selected and each viewport’s Open clean output control are in Viewports mode. Closing a window preserves its logical definition. Undoing deletion restores the definition with its original ID, without reopening the window. Projects save as schema 4 with portable project identity; versions 1/2/3 migrate explicitly, preserving their sampling. Saved empty viewport lists stay empty. Assigned-display fullscreen is available as a review prototype; see below.
+
+## Assigned-display fullscreen (review prototype)
+
+In **Viewports**, select Windowed or Fullscreen, choose a connected display, then Enable output. Identify Displays shows matching labels for about three seconds. One active fullscreen viewport is allowed per display; conflicts/missing targets report errors without moving another feed. Output resolution and canvas framing remain independent of the display.
+
+**Disable All Outputs** is always in the operator toolbar. **Command–Shift–Escape** disables outputs while Rastera is active, even with a text field focused. If fullscreen covers the operator display, use this shortcut; Command–Tab back to Rastera first if another app is active.
+
+```sh
+cargo run --release --locked -p rastera-desktop --bin canvas-editor -- --project=examples/dynamic-viewports.rastera.json --outputs=0
+```
+
+The editor defaults to disabled outputs. Machine-local mode/display preferences are separate from portable projects and scoped by machine, project identity and path. Opening a project disables current outputs before publishing its scene; saved fullscreen assignments never auto-enable. Disconnect handling preserves preferred targets and requires explicit re-enabling. [Controls, persistence, native behavior and exact verification](docs/display-outputs.md) distinguish API assertions on two mixed-scale displays from pending human picture/cable checks. Existing pause/capture limitations and milestone acceptance remain pending.
 
 ## Historical first-canvas checkpoint — acceptance pending
 

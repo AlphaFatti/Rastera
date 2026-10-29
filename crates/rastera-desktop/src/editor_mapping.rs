@@ -416,6 +416,9 @@ impl Editor {
                     ui.disable();
                 }
                 ui.heading("Output viewports");
+                if ui.button("Identify Displays · 3 seconds").clicked(){self.destinations.identify=true;}
+                if ui.button("Refresh displays").clicked(){self.destinations.refresh=true;}
+                ui.small("Fullscreen on the operator display covers the controls. Press ⌘⇧Esc to disable all outputs.");
                 add = ui.button("Add Viewport").clicked();
                 remove = ui
                     .add_enabled(
@@ -443,14 +446,7 @@ impl Editor {
                                     self.select_viewport(v.id);
                                 }
                             });
-                            let mut open = outputs.contains(&v.id);
-                            if ui.checkbox(&mut open, "Open clean output").changed() {
-                                if open {
-                                    outputs.insert(v.id);
-                                } else {
-                                    outputs.remove(&v.id);
-                                }
-                            }
+                            self.destinations.ui(ui,v.id,outputs);
                             ui.separator();
                         });
                     }

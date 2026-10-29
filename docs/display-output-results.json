@@ -1,0 +1,1000 @@
+[
+  {
+    "command": "python3 tools/display_output_probe.py --out /tmp/rastera-display-final",
+    "passed": true,
+    "native_assertions": {
+      "display_count": 2,
+      "external_count": 1,
+      "independent_displays_tested": true,
+      "limitations": [
+        "Local native replay, not human picture or physical scanout acceptance",
+        "Disconnect/reconnect and mixed-scale hardware need actual device checks",
+        "Existing transition/capture limitations remain"
+      ],
+      "native_states": [
+        {
+          "phase": 2,
+          "windowed": {
+            "drawable": [
+              1920,
+              1080
+            ],
+            "frame": [
+              20,
+              60,
+              960,
+              568
+            ],
+            "fullscreen": false,
+            "key": false,
+            "key_number": 112628,
+            "level": 0,
+            "mouse_ignored": false,
+            "number": 112639,
+            "spaces": 0,
+            "visible": true
+          }
+        },
+        {
+          "native": {
+            "drawable": [
+              3600,
+              2338
+            ],
+            "frame": [
+              0,
+              0,
+              1800,
+              1169
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 112628,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112639,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 3
+        },
+        {
+          "native": {
+            "drawable": [
+              3600,
+              2338
+            ],
+            "frame": [
+              0,
+              0,
+              1800,
+              1169
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 112628,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112639,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 4
+        },
+        {
+          "native": {
+            "drawable": [
+              3600,
+              2338
+            ],
+            "frame": [
+              0,
+              0,
+              1800,
+              1169
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 112628,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112639,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 5
+        },
+        {
+          "native": {
+            "drawable": [
+              1920,
+              1080
+            ],
+            "frame": [
+              1800,
+              89,
+              1920,
+              1080
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 112628,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112642,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 8
+        },
+        {
+          "native": {
+            "drawable": [
+              3600,
+              2338
+            ],
+            "frame": [
+              0,
+              0,
+              1800,
+              1169
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 112628,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112643,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 9
+        },
+        {
+          "phase": 10,
+          "windowed": {
+            "drawable": [
+              1920,
+              1080
+            ],
+            "frame": [
+              20,
+              60,
+              960,
+              568
+            ],
+            "fullscreen": false,
+            "key": false,
+            "key_number": 112628,
+            "level": 0,
+            "mouse_ignored": false,
+            "number": 112642,
+            "spaces": 0,
+            "visible": true
+          }
+        },
+        {
+          "native": {
+            "drawable": [
+              1920,
+              1080
+            ],
+            "frame": [
+              1800,
+              89,
+              1920,
+              1080
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 112628,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112646,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 16
+        },
+        {
+          "native": {
+            "drawable": [
+              1920,
+              1080
+            ],
+            "frame": [
+              1800,
+              89,
+              1920,
+              1080
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 112628,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112647,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 18
+        },
+        {
+          "native": {
+            "drawable": [
+              3600,
+              2338
+            ],
+            "frame": [
+              0,
+              0,
+              1800,
+              1169
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 0,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112647,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 19
+        }
+      ],
+      "passed": true
+    },
+    "instances": [
+      {
+        "viewport_id": 0,
+        "instance_id": 1,
+        "event_counts": {
+          "schedule": 325,
+          "commit": 325,
+          "complete": 325,
+          "presented": 325
+        },
+        "zero_presentation_timestamps": 76,
+        "positive_presentation_timestamps": 249,
+        "unmatched_logged_drawable_commits": 0,
+        "max_positive_api_presentation_gap_ms": 2270.839957986027,
+        "max_presentation_callback_arrival_gap_ms": 825.705208000727
+      },
+      {
+        "viewport_id": 1,
+        "instance_id": 2,
+        "event_counts": {
+          "schedule": 64,
+          "commit": 64,
+          "complete": 64,
+          "presented": 63
+        },
+        "zero_presentation_timestamps": 2,
+        "positive_presentation_timestamps": 61,
+        "unmatched_logged_drawable_commits": 1,
+        "max_positive_api_presentation_gap_ms": 50.00012501841411,
+        "max_presentation_callback_arrival_gap_ms": 50.14108296018094
+      },
+      {
+        "viewport_id": 1,
+        "instance_id": 3,
+        "event_counts": {
+          "schedule": 67,
+          "commit": 67,
+          "complete": 67,
+          "presented": 66
+        },
+        "zero_presentation_timestamps": 5,
+        "positive_presentation_timestamps": 61,
+        "unmatched_logged_drawable_commits": 1,
+        "max_positive_api_presentation_gap_ms": 16.666875046212226,
+        "max_presentation_callback_arrival_gap_ms": 63.612209050916135
+      },
+      {
+        "viewport_id": 1,
+        "instance_id": 7,
+        "event_counts": {
+          "schedule": 1,
+          "commit": 1,
+          "complete": 1,
+          "presented": 1
+        },
+        "zero_presentation_timestamps": 1,
+        "positive_presentation_timestamps": 0,
+        "unmatched_logged_drawable_commits": 0,
+        "max_positive_api_presentation_gap_ms": null,
+        "max_presentation_callback_arrival_gap_ms": null
+      },
+      {
+        "viewport_id": 1,
+        "instance_id": 8,
+        "event_counts": {
+          "schedule": 419,
+          "commit": 419,
+          "complete": 419,
+          "presented": 419
+        },
+        "zero_presentation_timestamps": 12,
+        "positive_presentation_timestamps": 407,
+        "unmatched_logged_drawable_commits": 0,
+        "max_positive_api_presentation_gap_ms": 50.00037496211007,
+        "max_presentation_callback_arrival_gap_ms": 50.084375019650906
+      },
+      {
+        "viewport_id": 2,
+        "instance_id": 4,
+        "event_counts": {
+          "schedule": 61,
+          "commit": 61,
+          "complete": 61,
+          "presented": 61
+        },
+        "zero_presentation_timestamps": 1,
+        "positive_presentation_timestamps": 60,
+        "unmatched_logged_drawable_commits": 0,
+        "max_positive_api_presentation_gap_ms": 50.00008305069059,
+        "max_presentation_callback_arrival_gap_ms": 50.154333002865314
+      },
+      {
+        "viewport_id": 3,
+        "instance_id": 5,
+        "event_counts": {
+          "schedule": 9,
+          "commit": 9,
+          "complete": 9,
+          "presented": 6
+        },
+        "zero_presentation_timestamps": 1,
+        "positive_presentation_timestamps": 5,
+        "unmatched_logged_drawable_commits": 3,
+        "max_positive_api_presentation_gap_ms": 50.00012501841411,
+        "max_presentation_callback_arrival_gap_ms": 49.63416600367054
+      }
+    ],
+    "max_logged_ui_gap_over_100ms_ms": 1022.025,
+    "shutdown_outstanding_slots": [
+      0
+    ],
+    "captures": [],
+    "driver_events": [
+      {
+        "event": "idle_start",
+        "host_s": 432520.279856541
+      },
+      {
+        "event": "cycle",
+        "host_s": 432520.989878791,
+        "cycle": 0
+      },
+      {
+        "event": "minimize_start",
+        "host_s": 432520.990816541
+      },
+      {
+        "event": "minimize_return",
+        "host_s": 432521.672260291
+      },
+      {
+        "event": "restore_start",
+        "host_s": 432522.084129833
+      },
+      {
+        "event": "restore_return",
+        "host_s": 432522.22087975
+      },
+      {
+        "event": "cycle",
+        "host_s": 432522.531440166,
+        "cycle": 1
+      },
+      {
+        "event": "minimize_start",
+        "host_s": 432522.532135416
+      },
+      {
+        "event": "minimize_return",
+        "host_s": 432523.458406791
+      },
+      {
+        "event": "restore_start",
+        "host_s": 432523.844514083
+      },
+      {
+        "event": "restore_return",
+        "host_s": 432523.96191675
+      },
+      {
+        "event": "cycle",
+        "host_s": 432524.27236325,
+        "cycle": 2
+      },
+      {
+        "event": "minimize_start",
+        "host_s": 432524.273657916
+      },
+      {
+        "event": "minimize_return",
+        "host_s": 432525.159431416
+      },
+      {
+        "event": "restore_start",
+        "host_s": 432525.573207541
+      },
+      {
+        "event": "restore_return",
+        "host_s": 432525.669051625
+      },
+      {
+        "event": "application_switch_start",
+        "host_s": 432525.979663291
+      },
+      {
+        "event": "application_switch_end",
+        "host_s": 432526.920132333
+      },
+      {
+        "event": "replay_passed",
+        "host_s": 432527.2796875
+      }
+    ],
+    "limitations": [
+      "API evidence is not physical scanout or human picture acceptance.",
+      "Whole-run gaps include intentional mode changes, retirement and application switching.",
+      "Missing logged callbacks do not establish physical frame drops.",
+      "Capture request/return times bound observations and can perturb playback."
+    ]
+  },
+  {
+    "command": "python3 tools/display_output_probe.py --out /tmp/rastera-display-captured --capture",
+    "passed": true,
+    "native_assertions": {
+      "display_count": 2,
+      "external_count": 1,
+      "independent_displays_tested": true,
+      "limitations": [
+        "Local native replay, not human picture or physical scanout acceptance",
+        "Disconnect/reconnect and mixed-scale hardware need actual device checks",
+        "Existing transition/capture limitations remain"
+      ],
+      "native_states": [
+        {
+          "phase": 2,
+          "windowed": {
+            "drawable": [
+              1920,
+              1080
+            ],
+            "frame": [
+              20,
+              60,
+              960,
+              568
+            ],
+            "fullscreen": false,
+            "key": false,
+            "key_number": 112650,
+            "level": 0,
+            "mouse_ignored": false,
+            "number": 112661,
+            "spaces": 0,
+            "visible": true
+          }
+        },
+        {
+          "native": {
+            "drawable": [
+              3600,
+              2338
+            ],
+            "frame": [
+              0,
+              0,
+              1800,
+              1169
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 112650,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112661,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 3
+        },
+        {
+          "native": {
+            "drawable": [
+              3600,
+              2338
+            ],
+            "frame": [
+              0,
+              0,
+              1800,
+              1169
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 112650,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112661,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 4
+        },
+        {
+          "native": {
+            "drawable": [
+              3600,
+              2338
+            ],
+            "frame": [
+              0,
+              0,
+              1800,
+              1169
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 112650,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112661,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 5
+        },
+        {
+          "native": {
+            "drawable": [
+              1920,
+              1080
+            ],
+            "frame": [
+              1800,
+              89,
+              1920,
+              1080
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 112650,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112664,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 8
+        },
+        {
+          "native": {
+            "drawable": [
+              3600,
+              2338
+            ],
+            "frame": [
+              0,
+              0,
+              1800,
+              1169
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 112650,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112665,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 9
+        },
+        {
+          "phase": 10,
+          "windowed": {
+            "drawable": [
+              1920,
+              1080
+            ],
+            "frame": [
+              20,
+              60,
+              960,
+              568
+            ],
+            "fullscreen": false,
+            "key": false,
+            "key_number": 112650,
+            "level": 0,
+            "mouse_ignored": false,
+            "number": 112664,
+            "spaces": 0,
+            "visible": true
+          }
+        },
+        {
+          "native": {
+            "drawable": [
+              1920,
+              1080
+            ],
+            "frame": [
+              1800,
+              89,
+              1920,
+              1080
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 112650,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112668,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 16
+        },
+        {
+          "native": {
+            "drawable": [
+              1920,
+              1080
+            ],
+            "frame": [
+              1800,
+              89,
+              1920,
+              1080
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 112650,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112669,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 18
+        },
+        {
+          "native": {
+            "drawable": [
+              3600,
+              2338
+            ],
+            "frame": [
+              0,
+              0,
+              1800,
+              1169
+            ],
+            "fullscreen": true,
+            "key": false,
+            "key_number": 0,
+            "level": 26,
+            "mouse_ignored": true,
+            "number": 112669,
+            "spaces": 262161,
+            "visible": true
+          },
+          "phase": 19
+        }
+      ],
+      "passed": true
+    },
+    "instances": [
+      {
+        "viewport_id": 0,
+        "instance_id": 1,
+        "event_counts": {
+          "schedule": 342,
+          "commit": 342,
+          "complete": 342,
+          "presented": 342
+        },
+        "zero_presentation_timestamps": 86,
+        "positive_presentation_timestamps": 256,
+        "unmatched_logged_drawable_commits": 0,
+        "max_positive_api_presentation_gap_ms": 1208.3369999891147,
+        "max_presentation_callback_arrival_gap_ms": 825.9062499855645
+      },
+      {
+        "viewport_id": 1,
+        "instance_id": 2,
+        "event_counts": {
+          "schedule": 63,
+          "commit": 63,
+          "complete": 63,
+          "presented": 61
+        },
+        "zero_presentation_timestamps": 2,
+        "positive_presentation_timestamps": 59,
+        "unmatched_logged_drawable_commits": 2,
+        "max_positive_api_presentation_gap_ms": 50.00016599660739,
+        "max_presentation_callback_arrival_gap_ms": 49.99504203442484
+      },
+      {
+        "viewport_id": 1,
+        "instance_id": 3,
+        "event_counts": {
+          "schedule": 3,
+          "commit": 3,
+          "complete": 3,
+          "presented": 3
+        },
+        "zero_presentation_timestamps": 3,
+        "positive_presentation_timestamps": 0,
+        "unmatched_logged_drawable_commits": 0,
+        "max_positive_api_presentation_gap_ms": null,
+        "max_presentation_callback_arrival_gap_ms": 29.971000039950013
+      },
+      {
+        "viewport_id": 1,
+        "instance_id": 6,
+        "event_counts": {
+          "schedule": 1,
+          "commit": 1,
+          "complete": 1,
+          "presented": 1
+        },
+        "zero_presentation_timestamps": 1,
+        "positive_presentation_timestamps": 0,
+        "unmatched_logged_drawable_commits": 0,
+        "max_positive_api_presentation_gap_ms": null,
+        "max_presentation_callback_arrival_gap_ms": null
+      },
+      {
+        "viewport_id": 1,
+        "instance_id": 7,
+        "event_counts": {
+          "schedule": 1,
+          "commit": 1,
+          "complete": 1,
+          "presented": 1
+        },
+        "zero_presentation_timestamps": 1,
+        "positive_presentation_timestamps": 0,
+        "unmatched_logged_drawable_commits": 0,
+        "max_positive_api_presentation_gap_ms": null,
+        "max_presentation_callback_arrival_gap_ms": null
+      },
+      {
+        "viewport_id": 1,
+        "instance_id": 8,
+        "event_counts": {
+          "schedule": 442,
+          "commit": 442,
+          "complete": 442,
+          "presented": 442
+        },
+        "zero_presentation_timestamps": 18,
+        "positive_presentation_timestamps": 424,
+        "unmatched_logged_drawable_commits": 0,
+        "max_positive_api_presentation_gap_ms": 50.00037502031773,
+        "max_presentation_callback_arrival_gap_ms": 50.097375002224
+      },
+      {
+        "viewport_id": 3,
+        "instance_id": 5,
+        "event_counts": {
+          "schedule": 9,
+          "complete": 9,
+          "commit": 9,
+          "presented": 8
+        },
+        "zero_presentation_timestamps": 2,
+        "positive_presentation_timestamps": 6,
+        "unmatched_logged_drawable_commits": 1,
+        "max_positive_api_presentation_gap_ms": 16.666750016156584,
+        "max_presentation_callback_arrival_gap_ms": 48.42583299614489
+      }
+    ],
+    "max_logged_ui_gap_over_100ms_ms": 1010.989,
+    "shutdown_outstanding_slots": [
+      0
+    ],
+    "captures": [
+      {
+        "file": "idle.png",
+        "sha256": "4796f40f0e976b780fd1d9532dab17d68676169c773c7e529561d5e4382c553e",
+        "yellow_marker": {
+          "pixels": 7200,
+          "mean_x": 932.5,
+          "bounds": [
+            915,
+            440,
+            950,
+            639
+          ]
+        }
+      },
+      {
+        "file": "minimize-0.png",
+        "sha256": "e253c0038556b64612ac68d141d1554ae7f0cfb7d9efbb28094c7b72b248294c",
+        "yellow_marker": {
+          "pixels": 7200,
+          "mean_x": 1061.5,
+          "bounds": [
+            1044,
+            440,
+            1079,
+            639
+          ]
+        }
+      },
+      {
+        "file": "minimize-1.png",
+        "sha256": "58db88e6a9ff627937e7445554b88ff6609d9c2f70a0d440cc7cf07da2c4a079",
+        "yellow_marker": {
+          "pixels": 7200,
+          "mean_x": 1511.5,
+          "bounds": [
+            1494,
+            440,
+            1529,
+            639
+          ]
+        }
+      },
+      {
+        "file": "minimize-2.png",
+        "sha256": "ab1cbd427ce410a4ee1242ac64e8936ff8f1cdccc634437a6ec55b7ac28bf1ef",
+        "yellow_marker": {
+          "pixels": 7200,
+          "mean_x": 281.5,
+          "bounds": [
+            264,
+            440,
+            299,
+            639
+          ]
+        }
+      },
+      {
+        "file": "other-application.png",
+        "sha256": "0391b79fda13587ddc83b6a194f0bc16670588e6c567c5a043a658fccf174589",
+        "yellow_marker": {
+          "pixels": 7200,
+          "mean_x": 1018.5,
+          "bounds": [
+            1001,
+            440,
+            1036,
+            639
+          ]
+        }
+      }
+    ],
+    "driver_events": [
+      {
+        "event": "idle_start",
+        "host_s": 432529.563702708
+      },
+      {
+        "event": "capture",
+        "host_s": 432530.529443833,
+        "file": "idle.png",
+        "start_host_s": 432530.372495041,
+        "end_host_s": 432530.529432541
+      },
+      {
+        "event": "cycle",
+        "host_s": 432530.529810916,
+        "cycle": 0
+      },
+      {
+        "event": "minimize_start",
+        "host_s": 432530.530186916
+      },
+      {
+        "event": "capture",
+        "host_s": 432530.946667208,
+        "file": "minimize-0.png",
+        "start_host_s": 432530.829008458,
+        "end_host_s": 432530.946659541
+      },
+      {
+        "event": "minimize_return",
+        "host_s": 432531.208289166
+      },
+      {
+        "event": "restore_start",
+        "host_s": 432531.622119583
+      },
+      {
+        "event": "restore_return",
+        "host_s": 432531.719084125
+      },
+      {
+        "event": "cycle",
+        "host_s": 432532.029247416,
+        "cycle": 1
+      },
+      {
+        "event": "minimize_start",
+        "host_s": 432532.032490291
+      },
+      {
+        "event": "capture",
+        "host_s": 432532.456878458,
+        "file": "minimize-1.png",
+        "start_host_s": 432532.339922791,
+        "end_host_s": 432532.456871458
+      },
+      {
+        "event": "minimize_return",
+        "host_s": 432532.973341666
+      },
+      {
+        "event": "restore_start",
+        "host_s": 432533.388187333
+      },
+      {
+        "event": "restore_return",
+        "host_s": 432533.494749875
+      },
+      {
+        "event": "cycle",
+        "host_s": 432533.802546333,
+        "cycle": 2
+      },
+      {
+        "event": "minimize_start",
+        "host_s": 432533.803509208
+      },
+      {
+        "event": "capture",
+        "host_s": 432534.217273833,
+        "file": "minimize-2.png",
+        "start_host_s": 432534.101730166,
+        "end_host_s": 432534.217265583
+      },
+      {
+        "event": "minimize_return",
+        "host_s": 432534.732701958
+      },
+      {
+        "event": "restore_start",
+        "host_s": 432535.138241
+      },
+      {
+        "event": "restore_return",
+        "host_s": 432535.266698541
+      },
+      {
+        "event": "application_switch_start",
+        "host_s": 432535.57730275
+      },
+      {
+        "event": "capture",
+        "host_s": 432536.668034166,
+        "file": "other-application.png",
+        "start_host_s": 432536.55024,
+        "end_host_s": 432536.668025208
+      },
+      {
+        "event": "application_switch_end",
+        "host_s": 432536.66842425
+      },
+      {
+        "event": "replay_passed",
+        "host_s": 432537.015922333
+      }
+    ],
+    "limitations": [
+      "API evidence is not physical scanout or human picture acceptance.",
+      "Whole-run gaps include intentional mode changes, retirement and application switching.",
+      "Missing logged callbacks do not establish physical frame drops.",
+      "Capture request/return times bound observations and can perturb playback."
+    ]
+  }
+]
