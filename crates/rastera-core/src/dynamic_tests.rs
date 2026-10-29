@@ -233,3 +233,40 @@ fn malformed_legacy_viewports_reject_without_panicking() {
     }
     std::fs::remove_dir_all(folder).unwrap();
 }
+
+#[test]
+fn new_viewport_is_pixel_exact_and_dimensions_scale_footprint() {
+    let mut doc = Document::default();
+    let id = doc.add_viewport().unwrap();
+    let v = doc.viewport_mut(id).unwrap();
+    assert_eq!(v.zoom, 1.);
+    assert_eq!(v.center, [1920., 540.]);
+    for (_, size) in VIEWPORT_PRESETS {
+        v.size = size;
+        let corners = v.corners();
+        assert_eq!(corners[1][0] - corners[0][0], size[0] as f32);
+        assert_eq!(corners[3][1] - corners[0][1], size[1] as f32);
+        assert_eq!(
+            v.canvas_point([0.5, 0.5]),
+            [
+                v.center[0] - size[0] as f32 / 2. + 0.5,
+                v.center[1] - size[1] as f32 / 2. + 0.5
+            ]
+        );
+    }
+}
+
+#[test]
+fn footprint_scale_changes_coverage_without_changing_resolution() {
+    let mut v = defaults().remove(0);
+    v.zoom = 0.5; // UI footprint scale = 200%.
+    let q = v.corners();
+    assert_eq!(v.size, [1920, 1080]);
+    assert_eq!(q[1][0] - q[0][0], 3840.);
+    assert_eq!(q[3][1] - q[0][1], 2160.);
+    v.zoom = 2.; // UI footprint scale = 50%.
+    let q = v.corners();
+    assert_eq!(v.size, [1920, 1080]);
+    assert_eq!(q[1][0] - q[0][0], 960.);
+    assert_eq!(q[3][1] - q[0][1], 540.);
+}

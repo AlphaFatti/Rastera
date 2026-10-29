@@ -6,6 +6,12 @@ This WIP checkpoint does not signify milestone acceptance. Individual native tra
 
 Status recorded October 29, 2026. This is an engineering prototype, not a production live-show application. The architecture blueprint remains the long-term direction.
 
+## Viewport pixel sizing correction
+
+New viewports now start at 100% canvas footprint scale: one logical output pixel corresponds to one canvas pixel. The inspector exposes footprint scale separately from output resolution and provides a 1:1 reset that preserves center/rotation. Native windows open/reconfigure to the requested backing-pixel dimensions using main-thread AppKit conversion; changing dimensions and undo resize open windows. Manual window resizing remains aspect-fitted. Existing project transforms remain intact. The seven-preset example uses 1:1 footprints.
+
+Thirty-six Rust tests, nine Python tests, formatting, locked check/Clippy and the release build pass. Native replay asserted exact initial drawable dimensions and live dimension Apply/undo, retained IDs/lifetimes and drained to zero leases. All seven tested output sizes logged exact Retina backing dimensions. Human visual acceptance, mixed-scale monitor changes, extreme desktop window sizes and the existing pause/capture limitations remain pending. See [the correction record](dynamic-viewports.md#pixel-sizing-correction-after-checkpoint-9669600).
+
 ## Dynamic viewports and custom output dimensions
 
 `feature/dynamic-viewports` builds on `4ee19523a890808e8a80a897205e4500884a1067`. The editor supports zero to eight stable logical viewport IDs, separate window lifetime, arbitrary validated logical output dimensions, all seven presets, undo/redo and schema-3 persistence with explicit v1/v2 migration. Frame metadata is immutable and looked up by ID by native consumers; the independent producer, bounded four-texture generations and completion-held leases remain. Workspace stays `#17151A`; baselines remain available. [Current controls, ownership and verification](dynamic-viewports.md).

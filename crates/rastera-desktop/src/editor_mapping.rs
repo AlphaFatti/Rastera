@@ -480,7 +480,8 @@ impl Editor {
                     ended|=ui.add(egui::TextEdit::singleline(&mut v.name).char_limit(32)).lost_focus();
                     if self.viewport_size.as_ref().is_none_or(|(id,original,_)|*id!=v.id||*original!=v.size){self.viewport_size=Some((v.id,v.size,v.size));}
                     let (_,_,draft)=self.viewport_size.as_mut().unwrap();
-                    ui.label("Logical output dimensions (independent of window)");
+                    ui.label("Output resolution · pixels");
+                    ui.small("Apply updates the clean window size and canvas footprint, preserving footprint scale.");
                     egui::ComboBox::from_id_salt("output_presets").selected_text("Preset / custom proportions").show_ui(ui,|ui|{for(name,size)in rastera_core::mapping::VIEWPORT_PRESETS{if ui.selectable_label(*draft==size,format!("{name} · {} × {}",size[0],size[1])).clicked(){*draft=size;}}});
                     for(label,n)in ["Width (px)","Height (px)"].into_iter().zip(draft.iter_mut()){ui.horizontal(|ui|{ui.label(label);ui.add(egui::DragValue::new(n).range(1..=8192));});}
                     ui.label(format!("Applied: {} × {} · {:.4}:1",v.size[0],v.size[1],v.size[0] as f64/v.size[1] as f64));
@@ -489,12 +490,18 @@ impl Editor {
                     if ui.add_enabled(valid.is_ok()&&*draft!=v.size,egui::Button::new("Apply dimensions")).clicked(){apply=Some((v.id,*draft));}
                     ui.separator();
                     for(label,n)in ["Center X (canvas px)","Center Y (canvas px)"].into_iter().zip(v.center.iter_mut()){ui.label(label);let r=ui.add(egui::DragValue::new(n).range(-65536.0..=65536.0));ended|=r.drag_stopped()||r.lost_focus();}
-                    ui.label("Zoom · 1 canvas pixel / logical output pixel at 1×");let r=ui.add(egui::DragValue::new(&mut v.zoom).range(rastera_core::mapping::MIN_VIEWPORT_ZOOM..=8192.).speed(0.01).suffix("×"));ended|=r.drag_stopped()||r.lost_focus();
+                    ui.label("Canvas footprint scale · 100% = 1:1 canvas pixels");
+                    let mut scale=100.0/v.zoom;
+                    let r=ui.add(egui::DragValue::new(&mut scale).range((100.0/8192.0)..=(100.0/rastera_core::mapping::MIN_VIEWPORT_ZOOM)).speed(0.5).suffix("%"));
+                    if r.changed(){v.zoom=100.0/scale;}
+                    ended|=r.drag_stopped()||r.lost_focus();
+                    ui.label(format!("Canvas footprint: {:.1} × {:.1} px",v.size[0] as f32/v.zoom,v.size[1] as f32/v.zoom));
+                    ui.small("Drag footprint corners to scale the canvas selection; output resolution stays fixed.");
                     ui.label("Clockwise rotation");let r=ui.add(egui::DragValue::new(&mut v.rotation).range(-36000.0..=36000.).speed(0.25).suffix("°"));ended|=r.drag_stopped()||r.lost_focus();
                     ui.label("Identity color · RGBA");ui.horizontal(|ui|{for c in &mut v.color{let r=ui.add(egui::DragValue::new(c).range(0..=255));ended|=r.drag_stopped()||r.lost_focus();}});
                     ui.horizontal(|ui|{
                         if ui.button("Fit Canvas").on_hover_text("Contain the whole canvas; center and rotation reset").clicked(){v.fit_canvas(self.doc.canvas);ended=true;}
-                        if ui.button("Center / 1×").on_hover_text("Center on the canvas, zoom 1× and rotation 0; logical dimensions stay unchanged.").clicked(){v.center=[self.doc.canvas[0] as f32/2.,self.doc.canvas[1] as f32/2.];v.zoom=1.;v.rotation=0.;ended=true;}
+                        if ui.button("1:1 canvas pixels").on_hover_text("One logical output pixel samples one canvas pixel. Preserve center and rotation.").clicked(){v.zoom=1.;ended=true;}
                     });
                     let id=v.id;*self.doc.viewport_mut(id).unwrap()=v;
                 }else{ui.label("Select a viewport or add one. Zero viewports is supported.");}

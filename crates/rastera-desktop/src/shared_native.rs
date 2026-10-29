@@ -42,6 +42,7 @@ unsafe extern "C" {
     fn rastera_shared_destroy(handle: *mut c_void);
     fn rastera_shared_is_open(handle: *mut c_void) -> bool;
     fn rastera_shared_report();
+    fn rastera_shared_sync_window_size(handle: *mut c_void);
     fn rastera_shared_title(handle: *mut c_void, name: *const c_char);
     fn rastera_shared_host_time() -> f64;
     fn rastera_shared_log(line: *const c_char);
@@ -303,6 +304,7 @@ impl eframe::App for App {
                 let name = CString::new(name.replace('\0', "")).unwrap();
                 unsafe {
                     rastera_shared_title(out.handle.as_ptr(), name.as_ptr());
+                    rastera_shared_sync_window_size(out.handle.as_ptr());
                 }
             }
         }

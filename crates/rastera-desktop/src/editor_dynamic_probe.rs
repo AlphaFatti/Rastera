@@ -4,6 +4,7 @@ use rastera_core::mapping::{FrameViewport, MAX_VIEWPORTS};
 use rastera_core::shared_frames::FrameLease;
 use std::collections::{BTreeMap, BTreeSet};
 unsafe extern "C" {
+    fn rastera_editor_metrics(handle: *mut std::ffi::c_void, out: *mut f32);
     fn rastera_shared_pending_read_probe(handle: *mut std::ffi::c_void) -> bool;
     fn rastera_shared_instance(handle: *mut std::ffi::c_void) -> u64;
     fn rastera_shared_inflight(handle: *mut std::ffi::c_void) -> u32;
@@ -147,6 +148,19 @@ impl Dynamic {
                 }
                 Self::metadata(e, p)?;
                 if self.frames == 0 {
+                    for v in &e.doc.viewports {
+                        let mut metrics = [0.; 3];
+                        unsafe {
+                            rastera_editor_metrics(
+                                outputs[&v.id].handle.as_ptr(),
+                                metrics.as_mut_ptr(),
+                            );
+                        }
+                        check(
+                            metrics[0] == v.size[0] as f32 && metrics[1] == v.size[1] as f32,
+                            "Initial native backing size differs from output resolution",
+                        )?;
+                    }
                     self.snapshot(outputs);
                     self.before = Some(e.doc.clone());
                     std::fs::write(
@@ -170,6 +184,13 @@ impl Dynamic {
                 Self::metadata(e, p)?;
                 self.unchanged(outputs, 0)?;
                 let id = self.ids[1];
+                let mut metrics = [0.; 3];
+                unsafe {
+                    rastera_editor_metrics(outputs[&id].handle.as_ptr(), metrics.as_mut_ptr());
+                }
+                if metrics[0] != 1920. || metrics[1] != 1200. {
+                    return Ok(false);
+                }
                 let old = self.before.as_ref().unwrap().viewport(id).unwrap();
                 let v = e.doc.viewport(id).unwrap();
                 check(

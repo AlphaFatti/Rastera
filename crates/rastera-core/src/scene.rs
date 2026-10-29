@@ -133,7 +133,7 @@ impl Document {
         while self.viewports.iter().any(|v| v.name == name) {
             name.push('+');
         }
-        let mut v = crate::mapping::Viewport {
+        let v = crate::mapping::Viewport {
             id,
             size: [1920, 1080],
             name,
@@ -141,11 +141,10 @@ impl Document {
                 .into_iter()
                 .find(|c| !self.viewports.iter().any(|v| v.color == *c))
                 .unwrap_or(palette[((id - 1) % 8) as usize]),
-            center: [0.; 2],
+            center: [self.canvas[0] as f32 / 2., self.canvas[1] as f32 / 2.],
             zoom: 1.,
             rotation: 0.,
         };
-        v.fit_canvas(self.canvas);
         self.viewports.push(v);
         Ok(id)
     }

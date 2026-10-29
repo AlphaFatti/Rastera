@@ -134,6 +134,7 @@ API_AVAILABLE(macos(14.0))
     void *_source;
     BOOL _embedded;
     uint64_t _viewportID;
+    uint32_t _sizedLogical[2];
     uint32_t _lastWidth,_lastHeight,_lastLogical[2]; float _lastMaps[8];
     std::atomic<float> _margin;
     BOOL _closed;
@@ -148,6 +149,7 @@ API_AVAILABLE(macos(14.0))
 - (uint32_t)inflightForProbe;
 - (uint64_t)instanceForProbe;
 - (BOOL)pendingReadForProbe;
+- (void)syncWindowSize;
 - (void)editorRect:(const float *)rect screen:(const float *)screen selection:(const float *)selected flags:(uint32_t)flags;
 - (BOOL)pollPointer:(EditorPointer *)out;
 - (void)replay:(uint32_t)kind x:(float)x y:(float)y modifiers:(uint64_t)modifiers;
@@ -158,6 +160,24 @@ API_AVAILABLE(macos(14.0))
 - (void)outputTitle:(NSString *)name;
 @end
 @implementation SharedCanvasConsumer
+// AppKit-only sizing; acquire immutable completed metadata, never wait for GPU work.
+- (void)syncWindowSize {
+    NSCAssert(NSThread.isMainThread,@"Window sizing on main");
+    if(_embedded||_closed)return;
+    SharedFrame frame{};
+    if(!rastera_shared_acquire(_source,&frame))return;
+    const FrameViewport *v=viewportFor(frame,_viewportID);
+    uint32_t w=v?v->width:0,h=v?v->height:0;
+    rastera_shared_release(frame.lease);
+    if(!w||!h||(_sizedLogical[0]==w&&_sizedLogical[1]==h))return;
+    _sizedLogical[0]=w;_sizedLogical[1]=h;
+    // Use AppKit's backing conversion rather than assuming a Retina scale factor.
+    NSRect points=[_window convertRectFromBacking:NSMakeRect(0,0,w,h)];
+    [_window setContentSize:points.size];
+    [_view resizeDrawable];
+    NSRect backing=[_view convertRectToBacking:_view.bounds];
+    std::fprintf(stderr,"shared_window_size viewport_id=%llu logical_w=%u logical_h=%u backing_w=%.0f backing_h=%.0f points_w=%.3f points_h=%.3f exact=%d main_thread=1\n",(unsigned long long)_viewportID,w,h,backing.size.width,backing.size.height,_view.bounds.size.width,_view.bounds.size.height,int(std::abs(backing.size.width-w)<0.5&&std::abs(backing.size.height-h)<0.5));
+}
 - (uint64_t)instanceForProbe {return _stats->instance;}
 - (uint32_t)inflightForProbe {return _stats->inflight.load();}
 // Diagnostic-only actual GPU reader. The normal render/present callback is unchanged.
@@ -256,6 +276,7 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
         BOOL replay=NO;for(NSString *arg in NSProcessInfo.processInfo.arguments)if([arg hasPrefix:@"--editor-probe="])replay=YES;
         if(replay){_window.title=[_window.title stringByAppendingString:@" (automated probe)"];[_window orderFront:nil];}else [_window makeKeyAndOrderFront:nil];
     }
+    [self syncWindowSize];
     [_view resizeDrawable];
     { std::lock_guard<std::mutex> guard(registryMutex); registry.push_back(_stats); }
     std::fprintf(stderr,"shared_open role=%s viewport_id=%llu instance_id=%llu width=%u height=%u animation_readback=%ld\n",_stats->role.c_str(),(unsigned long long)_stats->id,(unsigned long long)_stats->instance,logicalWidth,logicalHeight,(long)_window.animationBehavior);
@@ -499,3 +520,5 @@ extern "C" uint32_t rastera_shared_inflight(void *handle){
 extern "C" uint64_t rastera_shared_instance(void *handle){if(@available(macOS 14.0,*)){return [(__bridge SharedCanvasConsumer *)handle instanceForProbe];}return 0;}
 
 extern "C" bool rastera_shared_pending_read_probe(void *handle){if(@available(macOS 14.0,*)){return [(__bridge SharedCanvasConsumer *)handle pendingReadForProbe];}return false;}
+
+extern "C" void rastera_shared_sync_window_size(void *handle){if(@available(macOS 14.0,*)){[(__bridge SharedCanvasConsumer *)handle syncWindowSize];}}
