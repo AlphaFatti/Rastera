@@ -2,6 +2,27 @@
 pub use crate::theme::{ELECTRIC_YELLOW, SIGNAL_MINT};
 use serde::{Deserialize, Serialize};
 
+pub const MIN_VIEWPORT_ZOOM: f32 = 1.0 / 8192.0;
+pub const MAX_VIEWPORTS: usize = 8;
+pub const VIEWPORT_PRESETS: [(&str, [u32; 2]); 7] = [
+    ("HD", [1920, 1080]),
+    ("WUXGA", [1920, 1200]),
+    ("XGA", [1024, 768]),
+    ("Portrait", [1080, 1920]),
+    ("Square", [1080, 1080]),
+    ("Ultrawide", [3440, 1440]),
+    ("Banner", [960, 192]),
+];
+pub fn validate_output(size: [u32; 2]) -> Result<(), String> {
+    if size.contains(&0)
+        || size.iter().any(|&n| n > 8192)
+        || u64::from(size[0]) * u64::from(size[1]) > 16 * 1024 * 1024
+    {
+        Err("Output axes must be 1–8192 pixels, with at most 16 Mi-pixels; any aspect ratio is allowed".into())
+    } else {
+        Ok(())
+    }
+}
 pub const MAX_GENERATION_BYTES: u64 = 256 * 1024 * 1024;
 /// Four textures per generation, at most two live generations (512 MiB canvas storage).
 pub fn validate_canvas(size: [u32; 2], device_limit: u32) -> Result<u64, String> {
@@ -24,6 +45,7 @@ pub fn validate_canvas(size: [u32; 2], device_limit: u32) -> Result<u64, String>
 #[serde(deny_unknown_fields)]
 pub struct Viewport {
     pub id: u64,
+    pub size: [u32; 2],
     pub name: String,
     pub color: [u8; 4],
     pub center: [f32; 2],
@@ -40,11 +62,11 @@ impl Viewport {
         [
             a,
             b,
-            self.center[0] - a * 960. - b * 540.,
+            self.center[0] - a * self.size[0] as f32 / 2. - b * self.size[1] as f32 / 2.,
             0.,
             d,
             e,
-            self.center[1] - d * 960. - e * 540.,
+            self.center[1] - d * self.size[0] as f32 / 2. - e * self.size[1] as f32 / 2.,
             0.,
         ]
     }
@@ -60,16 +82,22 @@ impl Viewport {
         let x = p[0] - self.center[0];
         let y = p[1] - self.center[1];
         [
-            960. + self.zoom * (c * x + s * y),
-            540. + self.zoom * (-s * x + c * y),
+            self.size[0] as f32 / 2. + self.zoom * (c * x + s * y),
+            self.size[1] as f32 / 2. + self.zoom * (-s * x + c * y),
         ]
     }
     pub fn corners(&self) -> [[f32; 2]; 4] {
-        [[0., 0.], [1920., 0.], [1920., 1080.], [0., 1080.]].map(|p| self.canvas_point(p))
+        [
+            [0., 0.],
+            [self.size[0] as f32, 0.],
+            [self.size[0] as f32, self.size[1] as f32],
+            [0., self.size[1] as f32],
+        ]
+        .map(|p| self.canvas_point(p))
     }
     pub fn contains(&self, p: [f32; 2]) -> bool {
         let q = self.output_point(p);
-        q[0] >= 0. && q[1] >= 0. && q[0] < 1920. && q[1] < 1080.
+        q[0] >= 0. && q[1] >= 0. && q[0] < self.size[0] as f32 && q[1] < self.size[1] as f32
     }
     pub fn sample(&self, output: [f32; 2], canvas: [u32; 2]) -> Option<[u32; 2]> {
         let p = self.canvas_point(output);
@@ -81,11 +109,13 @@ impl Viewport {
     }
     pub fn fit_canvas(&mut self, size: [u32; 2]) {
         self.center = [size[0] as f32 / 2., size[1] as f32 / 2.];
-        self.zoom = (1920. / size[0] as f32).min(1080. / size[1] as f32);
+        self.zoom =
+            (self.size[0] as f32 / size[0] as f32).min(self.size[1] as f32 / size[1] as f32);
         self.rotation = 0.;
     }
     pub fn validate(&self) -> bool {
         self.id > 0
+            && validate_output(self.size).is_ok()
             && !self.name.trim().is_empty()
             && !self.name.chars().any(char::is_control)
             && self.name.len() <= 128
@@ -94,15 +124,16 @@ impl Viewport {
                 .iter()
                 .all(|x| x.is_finite() && x.abs() <= 65536.)
             && self.zoom.is_finite()
-            && (0.01..=4096.).contains(&self.zoom)
+            && (MIN_VIEWPORT_ZOOM..=8192.).contains(&self.zoom)
             && self.rotation.is_finite()
             && self.rotation.abs() <= 36000.
     }
 }
-pub fn defaults() -> [Viewport; 2] {
-    [
+pub fn defaults() -> Vec<Viewport> {
+    vec![
         Viewport {
             id: 1,
+            size: [1920, 1080],
             name: "Left".into(),
             color: SIGNAL_MINT,
             center: [960., 540.],
@@ -111,6 +142,7 @@ pub fn defaults() -> [Viewport; 2] {
         },
         Viewport {
             id: 2,
+            size: [1920, 1080],
             name: "Right".into(),
             color: ELECTRIC_YELLOW,
             center: [2880., 540.],
@@ -119,16 +151,43 @@ pub fn defaults() -> [Viewport; 2] {
         },
     ]
 }
+/// Immutable metadata owned by the same lease as the completed canvas texture.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FrameViewport {
+    pub id: u64,
+    pub size: [u32; 2],
+    pub matrix: [f32; 8],
+}
+const _: [(); 48] = [(); std::mem::size_of::<FrameViewport>()];
+impl From<&Viewport> for FrameViewport {
+    fn from(v: &Viewport) -> Self {
+        Self {
+            id: v.id,
+            size: v.size,
+            matrix: v.matrix(),
+        }
+    }
+}
 #[derive(Clone, Debug)]
 pub struct FrameMeta {
     pub canvas: [u32; 2],
-    pub maps: [[f32; 8]; 2],
+    pub viewports: std::sync::Arc<[FrameViewport]>,
+}
+impl FrameMeta {
+    pub fn viewport(&self, id: u64) -> Option<&FrameViewport> {
+        self.viewports.iter().find(|v| v.id == id)
+    }
 }
 impl Default for FrameMeta {
     fn default() -> Self {
         Self {
             canvas: [3840, 1080],
-            maps: defaults().map(|v| v.matrix()),
+            viewports: defaults()
+                .iter()
+                .map(FrameViewport::from)
+                .collect::<Vec<_>>()
+                .into(),
         }
     }
 }

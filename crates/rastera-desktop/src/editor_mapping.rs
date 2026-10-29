@@ -11,7 +11,7 @@ pub(super) enum Mode {
 }
 pub(super) struct ViewGesture {
     before: Document,
-    index: usize,
+    id: u64,
     start: [f32; 2],
     original: Viewport,
     kind: u32,
@@ -109,26 +109,35 @@ impl Editor {
             self.history.record(g.before, &self.doc);
         }
     }
-    fn rotation_point(&self, index: usize, map: PreviewMap, scale: f32) -> [f32; 2] {
+    fn rotation_point(&self, id: u64, map: PreviewMap, scale: f32) -> [f32; 2] {
         let f = rastera_core::viewport_hit::Footprint::new(
-            &self.doc.viewports[index],
+            self.doc.viewport(id).unwrap(),
             map,
             scale,
             [0.; 2],
         );
-        map.canvas(f.rotation.map(|x| x * scale), true)
-            .unwrap_or(self.doc.viewports[index].canvas_point([960., 0.]))
+        map.canvas(f.rotation.map(|x| x * scale), true).unwrap_or(
+            self.doc
+                .viewport(id)
+                .unwrap()
+                .canvas_point([self.doc.viewport(id).unwrap().size[0] as f32 / 2., 0.]),
+        )
     }
-    fn label_sizes(&self) -> [[f32; 2]; 2] {
-        self.doc.viewports.each_ref().map(|v| {
-            let name = CString::new(v.name.replace('\0', "")).unwrap();
-            let mut size = [0.; 2];
-            // SAFETY: main-thread native font measurement writes exactly two floats.
-            unsafe {
-                rastera_editor_label_size(name.as_ptr(), size.as_mut_ptr());
-            }
-            size
-        })
+    fn label_sizes(&self) -> Vec<[f32; 2]> {
+        self.doc
+            .viewports
+            .iter()
+            .map(|v| {
+                let name =
+                    CString::new(format!("{} · {}", v.name.replace('\0', ""), v.id)).unwrap();
+                let mut size = [0.; 2];
+                // SAFETY: main-thread native font measurement writes exactly two floats.
+                unsafe {
+                    rastera_editor_label_size(name.as_ptr(), size.as_mut_ptr());
+                }
+                size
+            })
+            .collect()
     }
 
     pub(super) fn preview_mapping(&self, preview: &Consumer) -> (PreviewMap, f32) {
@@ -142,12 +151,12 @@ impl Editor {
             metrics[2],
         )
     }
-    pub(super) fn select_viewport(&mut self, index: usize) {
+    pub(super) fn select_viewport(&mut self, id: u64) {
         self.finish_view_gesture();
         self.finish_inspector();
-        self.viewport_selected = Some(index);
+        self.viewport_selected = Some(id);
     }
-    pub(super) fn rotation_handle(&self, preview: &Consumer, index: usize) -> [f32; 2] {
+    pub(super) fn rotation_handle(&self, preview: &Consumer, id: u64) -> [f32; 2] {
         let mut metrics = [0.; 3];
         // SAFETY: main-thread metrics for this live preview; writes exactly three floats.
         unsafe {
@@ -155,7 +164,7 @@ impl Editor {
         }
         let map =
             PreviewMap::for_canvas(self.doc.canvas, [metrics[0], metrics[1]], 20. * metrics[2]);
-        self.rotation_point(index, map, metrics[2])
+        self.rotation_point(id, map, metrics[2])
     }
     pub(super) fn view_pointer(&mut self, event: &Pointer, map: PreviewMap, p: [f32; 2]) {
         match event.kind {
@@ -172,9 +181,9 @@ impl Editor {
                     [event.x, event.y],
                     event.modifiers & viewport_hit::OPTION_MODIFIER != 0,
                 );
-                self.viewport_selected = picked.map(|hit| hit.index);
+                self.viewport_selected = picked.map(|hit| hit.id);
                 if let Some(hit) = picked.filter(|h| h.kind != HitKind::Cycle) {
-                    let i = hit.index;
+                    let id = hit.id;
                     let kind = match hit.kind {
                         HitKind::Pan => 0,
                         HitKind::Resize => 1,
@@ -183,9 +192,9 @@ impl Editor {
                     };
                     self.view_gesture = Some(ViewGesture {
                         before: self.doc.clone(),
-                        index: i,
+                        id,
                         start: p,
-                        original: self.doc.viewports[i].clone(),
+                        original: self.doc.viewport(id).unwrap().clone(),
                         kind,
                     });
                 }
@@ -203,7 +212,8 @@ impl Editor {
                         1 => {
                             let a = (g.start[0] - v.center[0]).hypot(g.start[1] - v.center[1]);
                             let b = (p[0] - v.center[0]).hypot(p[1] - v.center[1]);
-                            v.zoom = (v.zoom * a / b.max(0.01)).clamp(0.01, 4096.);
+                            v.zoom = (v.zoom * a / b.max(0.01))
+                                .clamp(rastera_core::mapping::MIN_VIEWPORT_ZOOM, 8192.);
                         }
                         _ => {
                             let a = (g.start[1] - v.center[1]).atan2(g.start[0] - v.center[0]);
@@ -212,7 +222,12 @@ impl Editor {
                                 (v.rotation + (b - a).to_degrees() + 180.).rem_euclid(360.) - 180.;
                         }
                     }
-                    self.doc.viewports[g.index] = v;
+                    if let Some(target) = self.doc.viewport_mut(g.id) {
+                        *target = v;
+                    } else {
+                        self.view_gesture = None;
+                        return;
+                    }
                     self.publish();
                 }
                 if event.kind == 3 {
@@ -281,9 +296,9 @@ impl Editor {
                 }
             }
         } else {
-            for (i, v) in self.doc.viewports.iter().enumerate() {
+            for v in &self.doc.viewports {
                 let q = v.corners();
-                let selected = self.viewport_selected == Some(i);
+                let selected = self.viewport_selected == Some(v.id);
                 for k in 0..4 {
                     line(
                         q[k],
@@ -296,16 +311,30 @@ impl Editor {
                         line(q[k], q[k], v.color, 1., 1);
                     }
                 }
-                let top = v.canvas_point([960., 0.]);
+                let top = v.canvas_point([v.size[0] as f32 / 2., 0.]);
                 line(v.center, top, v.color, 1., 0);
-                line(top, v.canvas_point([900., 160.]), v.color, 2., 0);
-                line(top, v.canvas_point([1020., 160.]), v.color, 2., 0);
+                line(
+                    top,
+                    v.canvas_point([v.size[0] as f32 * 0.47, v.size[1] as f32 * 0.15]),
+                    v.color,
+                    2.,
+                    0,
+                );
+                line(
+                    top,
+                    v.canvas_point([v.size[0] as f32 * 0.53, v.size[1] as f32 * 0.15]),
+                    v.color,
+                    2.,
+                    0,
+                );
                 if selected {
-                    let r = self.rotation_point(i, map, metrics[2]);
+                    let r = self.rotation_point(v.id, map, metrics[2]);
                     line(top, r, v.color, 1., 0);
                     line(r, r, v.color, 1., 2);
                 }
-                names.push(CString::new(v.name.replace('\0', "")).unwrap());
+                names.push(
+                    CString::new(format!("{} · {}", v.name.replace('\0', ""), v.id)).unwrap(),
+                );
                 label_values.push((q[0], v.color));
             }
         }
@@ -331,109 +360,146 @@ impl Editor {
             );
         }
     }
-    pub(super) fn viewport_panel(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("viewport_list")
-            .default_width(210.)
-            .show(ctx, |ui| {
-                if self.busy_file
-                    || self.pending_load.is_some()
-                    || self.settings.is_some()
-                    || self.font_dialog
-                {
-                    ui.disable();
-                }
-                ui.heading("Output viewports");
-                for i in 0..2 {
-                    let v = self.doc.viewports[i].clone();
-                    ui.horizontal(|ui| {
-                        ui.colored_label(color(v.color), "■");
-                        if ui
-                            .selectable_label(self.viewport_selected == Some(i), &v.name)
-                            .clicked()
-                        {
-                            self.select_viewport(i);
-                        }
-                    });
-                }
-                ui.label("Drag a name or outline to select and move. Option-click cycles overlaps; then drag normally.");
-                ui.label("Footprints sample the canvas. Outside is black.");
-            });
+    pub(super) fn add_viewport(&mut self) {
+        self.finish_view_gesture();
+        self.finish_inspector();
         let before = self.doc.clone();
+        match self.doc.add_viewport() {
+            Ok(id) => {
+                self.viewport_selected = Some(id);
+                self.history.record(before, &self.doc);
+                self.publish();
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+    pub(super) fn remove_viewport(&mut self, id: u64) {
+        self.finish_view_gesture();
+        self.finish_inspector();
+        let before = self.doc.clone();
+        if self.doc.remove_viewport(id) {
+            self.viewport_selected = None;
+            self.viewport_size = None;
+            self.history.record(before, &self.doc);
+            self.publish();
+        }
+    }
+    pub(super) fn apply_viewport_size(&mut self, id: u64, size: [u32; 2]) -> Result<(), String> {
+        rastera_core::mapping::validate_output(size)?;
+        self.finish_view_gesture();
+        self.finish_inspector();
+        let before = self.doc.clone();
+        self.doc
+            .viewport_mut(id)
+            .ok_or("Viewport no longer exists")?
+            .size = size;
+        self.viewport_size = None;
+        self.history.record(before, &self.doc);
+        self.publish();
+        Ok(())
+    }
+    pub(super) fn viewport_panel(
+        &mut self,
+        ctx: &egui::Context,
+        outputs: &mut std::collections::BTreeSet<u64>,
+    ) {
         let blocked = self.busy_file
             || self.pending_load.is_some()
             || self.settings.is_some()
             || self.font_dialog;
-        let mut ended = false;
-        egui::SidePanel::right("viewport_inspector")
-            .default_width(280.)
+        let mut add = false;
+        let mut remove = false;
+        egui::SidePanel::left("viewport_list")
+            .default_width(230.)
             .show(ctx, |ui| {
                 if blocked {
                     ui.disable();
                 }
-                ui.heading("Viewport inspector");
-                if let Some(i) = self.viewport_selected {
-                    let v = &mut self.doc.viewports[i];
-                    ui.colored_label(color(v.color), format!("■ {} · ID {}", v.name, v.id));
-                    let r = ui.add(egui::TextEdit::singleline(&mut v.name).char_limit(32));
-                    ended |= r.lost_focus();
-                    for (label, n) in ["Center X (canvas px)", "Center Y (canvas px)"]
-                        .into_iter()
-                        .zip(v.center.iter_mut())
-                    {
-                        ui.label(label);
-                        let r = ui.add(egui::DragValue::new(n).range(-65536.0..=65536.0));
-                        ended |= r.drag_stopped() || r.lost_focus();
+                ui.heading("Output viewports");
+                add = ui.button("Add Viewport").clicked();
+                remove = ui
+                    .add_enabled(
+                        self.viewport_selected.is_some(),
+                        egui::Button::new("Remove Selected"),
+                    )
+                    .clicked();
+                ui.label(format!(
+                    "{} / {} logical viewports",
+                    self.doc.viewports.len(),
+                    rastera_core::mapping::MAX_VIEWPORTS
+                ));
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for v in self.doc.viewports.clone() {
+                        ui.push_id(v.id, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.colored_label(color(v.color), "■");
+                                if ui
+                                    .selectable_label(
+                                        self.viewport_selected == Some(v.id),
+                                        format!("{} · {}", v.name, v.id),
+                                    )
+                                    .clicked()
+                                {
+                                    self.select_viewport(v.id);
+                                }
+                            });
+                            let mut open = outputs.contains(&v.id);
+                            if ui.checkbox(&mut open, "Open clean output").changed() {
+                                if open {
+                                    outputs.insert(v.id);
+                                } else {
+                                    outputs.remove(&v.id);
+                                }
+                            }
+                            ui.separator();
+                        });
                     }
-                    ui.label("Zoom · 1 canvas pixel / output pixel at 1×");
-                    let r = ui.add(
-                        egui::DragValue::new(&mut v.zoom)
-                            .range(0.01..=4096.)
-                            .speed(0.01)
-                            .suffix("×"),
-                    );
-                    ended |= r.drag_stopped() || r.lost_focus();
-                    ui.label("Clockwise rotation");
-                    let r = ui.add(
-                        egui::DragValue::new(&mut v.rotation)
-                            .range(-36000.0..=36000.)
-                            .speed(0.25)
-                            .suffix("°"),
-                    );
-                    ended |= r.drag_stopped() || r.lost_focus();
-                    ui.label("Identity color · RGBA");
-                    ui.horizontal(|ui| {
-                        for c in &mut v.color {
-                            let r = ui.add(egui::DragValue::new(c).range(0..=255));
-                            ended |= r.drag_stopped() || r.lost_focus();
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button("Fit Canvas")
-                            .on_hover_text(
-                                "Show the whole canvas, centered, rotation 0; black outside",
-                            )
-                            .clicked()
-                        {
-                            v.fit_canvas(self.doc.canvas);
-                            ended = true;
-                        }
-                        if ui
-                            .button("Reset")
-                            .on_hover_text(
-                                "Original half: center 960/2880,540; zoom 1×; rotation 0",
-                            )
-                            .clicked()
-                        {
-                            let d = rastera_core::mapping::defaults();
-                            v.center = d[i].center;
-                            v.zoom = 1.;
-                            v.rotation = 0.;
-                            ended = true;
-                        }
-                    });
-                }
+                });
+                ui.label("Drag names/outlines. Option-click cycles overlaps, then drag normally.");
+                ui.label(
+                    "Outside the canvas samples black. Windows are separate from definitions.",
+                );
             });
+        if add {
+            self.add_viewport();
+        }
+        if remove {
+            if let Some(id) = self.viewport_selected {
+                self.remove_viewport(id);
+            }
+        }
+        let before = self.doc.clone();
+        let mut ended = false;
+        let mut apply = None;
+        egui::SidePanel::right("viewport_inspector").default_width(280.).show(ctx,|ui|{
+            if blocked{ui.disable();}
+            ui.heading("Viewport inspector");
+            egui::ScrollArea::vertical().show(ui,|ui|{
+                if let Some(mut v)=self.viewport_selected.and_then(|id|self.doc.viewport(id)).cloned(){
+                    ui.colored_label(color(v.color),format!("■ {} · ID {}",v.name,v.id));
+                    ended|=ui.add(egui::TextEdit::singleline(&mut v.name).char_limit(32)).lost_focus();
+                    if self.viewport_size.as_ref().is_none_or(|(id,original,_)|*id!=v.id||*original!=v.size){self.viewport_size=Some((v.id,v.size,v.size));}
+                    let (_,_,draft)=self.viewport_size.as_mut().unwrap();
+                    ui.label("Logical output dimensions (independent of window)");
+                    egui::ComboBox::from_id_salt("output_presets").selected_text("Preset / custom proportions").show_ui(ui,|ui|{for(name,size)in rastera_core::mapping::VIEWPORT_PRESETS{if ui.selectable_label(*draft==size,format!("{name} · {} × {}",size[0],size[1])).clicked(){*draft=size;}}});
+                    for(label,n)in ["Width (px)","Height (px)"].into_iter().zip(draft.iter_mut()){ui.horizontal(|ui|{ui.label(label);ui.add(egui::DragValue::new(n).range(1..=8192));});}
+                    ui.label(format!("Applied: {} × {} · {:.4}:1",v.size[0],v.size[1],v.size[0] as f64/v.size[1] as f64));
+                    let valid=rastera_core::mapping::validate_output(*draft);
+                    if let Err(error)=&valid{ui.colored_label(color(t::ELECTRIC_YELLOW),error);}
+                    if ui.add_enabled(valid.is_ok()&&*draft!=v.size,egui::Button::new("Apply dimensions")).clicked(){apply=Some((v.id,*draft));}
+                    ui.separator();
+                    for(label,n)in ["Center X (canvas px)","Center Y (canvas px)"].into_iter().zip(v.center.iter_mut()){ui.label(label);let r=ui.add(egui::DragValue::new(n).range(-65536.0..=65536.0));ended|=r.drag_stopped()||r.lost_focus();}
+                    ui.label("Zoom · 1 canvas pixel / logical output pixel at 1×");let r=ui.add(egui::DragValue::new(&mut v.zoom).range(rastera_core::mapping::MIN_VIEWPORT_ZOOM..=8192.).speed(0.01).suffix("×"));ended|=r.drag_stopped()||r.lost_focus();
+                    ui.label("Clockwise rotation");let r=ui.add(egui::DragValue::new(&mut v.rotation).range(-36000.0..=36000.).speed(0.25).suffix("°"));ended|=r.drag_stopped()||r.lost_focus();
+                    ui.label("Identity color · RGBA");ui.horizontal(|ui|{for c in &mut v.color{let r=ui.add(egui::DragValue::new(c).range(0..=255));ended|=r.drag_stopped()||r.lost_focus();}});
+                    ui.horizontal(|ui|{
+                        if ui.button("Fit Canvas").on_hover_text("Contain the whole canvas; center and rotation reset").clicked(){v.fit_canvas(self.doc.canvas);ended=true;}
+                        if ui.button("Center / 1×").on_hover_text("Center on the canvas, zoom 1× and rotation 0; logical dimensions stay unchanged.").clicked(){v.center=[self.doc.canvas[0] as f32/2.,self.doc.canvas[1] as f32/2.];v.zoom=1.;v.rotation=0.;ended=true;}
+                    });
+                    let id=v.id;*self.doc.viewport_mut(id).unwrap()=v;
+                }else{ui.label("Select a viewport or add one. Zero viewports is supported.");}
+            });
+        });
         if self.doc != before {
             if self.inspector_before.is_none() {
                 self.inspector_before = Some(before);
@@ -442,6 +508,11 @@ impl Editor {
         }
         if ended {
             self.finish_inspector();
+        }
+        if let Some((id, size)) = apply {
+            if let Err(error) = self.apply_viewport_size(id, size) {
+                self.error = Some(error);
+            }
         }
     }
     pub(super) fn dialog_ui(&mut self, ctx: &egui::Context) {

@@ -105,3 +105,6 @@ pub mod mapping;
 pub mod theme;
 
 pub mod viewport_hit;
+
+#[cfg(test)]
+mod dynamic_tests;

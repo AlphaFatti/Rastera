@@ -11,7 +11,7 @@ pub enum HitKind {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Hit {
-    pub index: usize,
+    pub id: u64,
     pub kind: HitKind,
 }
 #[derive(Clone, Debug)]
@@ -45,13 +45,10 @@ impl Footprint {
             ]
         };
         let corners = v.corners().map(screen);
-        let top = screen(v.canvas_point([960., 0.]));
-        let center = screen(v.center);
-        let len = distance(top, center);
-        let rotation = [
-            top[0] + (top[0] - center[0]) / len * 24.,
-            top[1] + (top[1] - center[1]) / len * 24.,
-        ];
+        let top = screen(v.canvas_point([v.size[0] as f32 / 2., 0.]));
+        // Derive orientation analytically, even when a tiny footprint rounds to its center.
+        let (sin, cos) = v.rotation.to_radians().sin_cos();
+        let rotation = [top[0] + sin * 24., top[1] - cos * 24.];
         Self {
             corners,
             rotation,
@@ -90,7 +87,7 @@ pub fn pick(
     map: PreviewMap,
     scale: f32,
     label_sizes: &[[f32; 2]],
-    selected: Option<usize>,
+    selected: Option<u64>,
     pixel: [f32; 2],
     option: bool,
 ) -> Option<Hit> {
@@ -104,7 +101,7 @@ pub fn pick(
         .enumerate()
         .map(|(i, v)| Footprint::new(v, map, scale, label_sizes[i]))
         .collect();
-    let selected = selected.filter(|&i| i < viewports.len());
+    let selected = selected.and_then(|id| viewports.iter().position(|v| v.id == id));
     if option {
         let mut candidates: Vec<_> = (0..viewports.len())
             .filter(|&i| {
@@ -122,13 +119,16 @@ pub fn pick(
             .and_then(|i| candidates.iter().position(|&c| c == i))
             .map_or(0, |n| (n + 1) % candidates.len());
         return Some(Hit {
-            index: candidates[next],
+            id: viewports[candidates[next]].id,
             kind: HitKind::Cycle,
         });
     }
     if let Some(i) = selected {
         if let Some(kind) = geometry[i].handle(p) {
-            return Some(Hit { index: i, kind });
+            return Some(Hit {
+                id: viewports[i].id,
+                kind,
+            });
         }
     }
     let order: Vec<_> = selected
@@ -137,7 +137,7 @@ pub fn pick(
         .collect();
     if let Some(&i) = order.iter().find(|&&i| geometry[i].label_hit(p)) {
         return Some(Hit {
-            index: i,
+            id: viewports[i].id,
             kind: HitKind::Pan,
         });
     }
@@ -152,7 +152,7 @@ pub fn pick(
     }
     if let Some(index) = closest {
         return Some(Hit {
-            index,
+            id: viewports[index].id,
             kind: HitKind::Pan,
         });
     }
@@ -160,7 +160,7 @@ pub fn pick(
         .into_iter()
         .find(|&i| viewports[i].contains(canvas))
         .map(|index| Hit {
-            index,
+            id: viewports[index].id,
             kind: HitKind::Pan,
         })
 }
@@ -188,10 +188,10 @@ mod tests {
         v[1].zoom = 0.5;
         let m = map(1.);
         assert_eq!(
-            pick(&v, m, 1., &sizes(), Some(1), pixel(m, [960., 540.]), true)
+            pick(&v, m, 1., &sizes(), Some(2), pixel(m, [960., 540.]), true)
                 .unwrap()
-                .index,
-            0
+                .id,
+            1
         );
         let f = Footprint::new(&v[0], m, 1., sizes()[0]);
         for p in [
@@ -202,24 +202,24 @@ mod tests {
             ],
         ] {
             assert_eq!(
-                pick(&v, m, 1., &sizes(), Some(1), p, false),
+                pick(&v, m, 1., &sizes(), Some(2), p, false),
                 Some(Hit {
-                    index: 0,
+                    id: 1,
                     kind: HitKind::Pan
                 })
             );
         }
         assert_eq!(
-            pick(&v, m, 1., &sizes(), Some(0), pixel(m, [960., 540.]), false)
-                .unwrap()
-                .index,
-            0
-        );
-        assert_eq!(
             pick(&v, m, 1., &sizes(), Some(1), pixel(m, [960., 540.]), false)
                 .unwrap()
-                .index,
+                .id,
             1
+        );
+        assert_eq!(
+            pick(&v, m, 1., &sizes(), Some(2), pixel(m, [960., 540.]), false)
+                .unwrap()
+                .id,
+            2
         );
     }
     #[test]
@@ -239,10 +239,8 @@ mod tests {
                 (mid[1] - (b[0] - a[0]) / length * 5.) * scale,
             ];
             assert_eq!(
-                pick(&v, m, scale, &sizes(), Some(1), p, false)
-                    .unwrap()
-                    .index,
-                0
+                pick(&v, m, scale, &sizes(), Some(2), p, false).unwrap().id,
+                1
             );
             assert!((f.outline_distance([p[0] / scale, p[1] / scale]) - 5.).abs() < 0.001);
             let outside = [
@@ -250,10 +248,10 @@ mod tests {
                 (mid[1] - (b[0] - a[0]) / length * 8.) * scale,
             ];
             assert_eq!(
-                pick(&v, m, scale, &sizes(), Some(1), outside, false)
+                pick(&v, m, scale, &sizes(), Some(2), outside, false)
                     .unwrap()
-                    .index,
-                1
+                    .id,
+                2
             );
             assert_eq!(
                 pick(
@@ -261,13 +259,13 @@ mod tests {
                     m,
                     scale,
                     &sizes(),
-                    Some(0),
+                    Some(1),
                     pixel(m, [1000., 550.]),
                     true
                 )
                 .unwrap()
-                .index,
-                1
+                .id,
+                2
             );
         }
     }
@@ -278,20 +276,20 @@ mod tests {
         let m = map(2.);
         let p = pixel(m, [960., 540.]);
         let mut selected = None;
-        for expected in [0, 1, 0, 1] {
+        for expected in [1, 2, 1, 2] {
             let h = pick(&v, m, 2., &sizes(), selected, p, true).unwrap();
             assert_eq!(
                 h,
                 Hit {
-                    index: expected,
+                    id: expected,
                     kind: HitKind::Cycle
                 }
             );
-            selected = Some(h.index);
+            selected = Some(h.id);
             assert_eq!(
                 pick(&v, m, 2., &sizes(), selected, p, false).unwrap(),
                 Hit {
-                    index: expected,
+                    id: expected,
                     kind: HitKind::Pan
                 }
             );
@@ -299,30 +297,28 @@ mod tests {
         let f = Footprint::new(&v[0], m, 2., sizes()[0]);
         let label = [(f.label[0] + 5.) * 2., (f.label[1] + 5.) * 2.];
         assert_eq!(
-            pick(&v, m, 2., &sizes(), Some(0), label, false).unwrap(),
+            pick(&v, m, 2., &sizes(), Some(1), label, false).unwrap(),
             Hit {
-                index: 0,
+                id: 1,
                 kind: HitKind::Pan
             }
         );
         assert_eq!(
-            pick(&v, m, 2., &sizes(), Some(1), label, false).unwrap(),
+            pick(&v, m, 2., &sizes(), Some(2), label, false).unwrap(),
             Hit {
-                index: 1,
+                id: 2,
                 kind: HitKind::Pan
             }
         );
         v[0].id = 20;
         v[1].id = 10;
-        assert_eq!(pick(&v, m, 2., &sizes(), None, p, true).unwrap().index, 1);
+        assert_eq!(pick(&v, m, 2., &sizes(), None, p, true).unwrap().id, 10);
 
         assert_eq!(
-            pick(&v, m, 2., &sizes(), Some(0), label, true)
-                .unwrap()
-                .index,
-            1
+            pick(&v, m, 2., &sizes(), Some(20), label, true).unwrap().id,
+            10
         );
-        assert_eq!(pick(&v, m, 2., &sizes(), Some(0), [0., 0.], true), None);
+        assert_eq!(pick(&v, m, 2., &sizes(), Some(1), [0., 0.], true), None);
     }
     #[test]
     fn selected_handles_precede_other_labels_and_outlines() {
@@ -335,11 +331,11 @@ mod tests {
             (f.rotation, HitKind::Rotate),
         ] {
             assert_eq!(
-                pick(&v, m, 2., &sizes(), Some(0), p.map(|x| x * 2.), false),
-                Some(Hit { index: 0, kind })
+                pick(&v, m, 2., &sizes(), Some(1), p.map(|x| x * 2.), false),
+                Some(Hit { id: 1, kind })
             );
             assert_eq!(
-                pick(&v, m, 2., &sizes(), Some(0), p.map(|x| x * 2.), true)
+                pick(&v, m, 2., &sizes(), Some(1), p.map(|x| x * 2.), true)
                     .unwrap()
                     .kind,
                 HitKind::Cycle

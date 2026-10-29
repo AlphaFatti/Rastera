@@ -150,12 +150,13 @@ pub(super) struct Editor {
     pending_load: Option<(u64, PathBuf, Document)>,
     project: Option<PathBuf>,
     saved: Option<Document>,
-    error: Option<String>,
+    pub(super) error: Option<String>,
     probe: Option<probe::Probe>,
     library: Arc<rastera_core::fonts::FontLibrary>,
     mode: Mode,
-    viewport_selected: Option<usize>,
+    viewport_selected: Option<u64>,
     view_gesture: Option<mapping::ViewGesture>,
+    viewport_size: Option<(u64, [u32; 2], [u32; 2])>,
     settings: Option<[u32; 2]>,
     settings_requested: bool,
     font_dialog: bool,
@@ -176,8 +177,9 @@ impl Editor {
             engine,
             library,
             mode: Mode::Canvas,
-            viewport_selected: Some(0),
+            viewport_selected: Some(1),
             view_gesture: None,
+            viewport_size: None,
             settings: None,
             settings_requested: false,
             font_dialog: false,
@@ -209,6 +211,9 @@ impl Editor {
             editor.file_job(FileJob::Load(path));
         }
         editor
+    }
+    pub(super) fn busy_loading(&self) -> bool {
+        self.busy_file || self.pending_load.is_some()
     }
     fn stage_document(&mut self, doc: Document, path: Option<PathBuf>) {
         self.pending_before = Some(self.doc.clone());
@@ -253,7 +258,8 @@ impl Editor {
                     self.history.record(before, &self.doc);
                     self.publish();
                 }
-                Ok(FileResult::Loaded(path, doc)) => {
+                Ok(FileResult::Loaded(path, mut doc)) => {
+                    doc.next_viewport_id = doc.next_viewport_id.max(self.doc.next_viewport_id);
                     self.stage_document(doc, Some(path));
                 }
                 Ok(FileResult::Saved(path, doc)) => {
@@ -302,6 +308,14 @@ impl Editor {
                 self.history.record(before, &self.doc);
             }
             self.pending_ready = false;
+        }
+        if self
+            .viewport_selected
+            .is_some_and(|id| self.doc.viewport(id).is_none())
+        {
+            self.viewport_selected = None;
+            self.view_gesture = None;
+            self.viewport_size = None;
         }
         if self.selected.is_some_and(|id| self.doc.layer(id).is_none()) {
             self.selected = None;
@@ -412,8 +426,8 @@ impl Editor {
     pub fn probe_tick(
         &mut self,
         preview: &Consumer,
-        outputs: &[Option<Consumer>; 2],
-        enabled: &mut [bool; 2],
+        outputs: &std::collections::BTreeMap<u64, Consumer>,
+        enabled: &mut std::collections::BTreeSet<u64>,
     ) {
         if let Some(mut probe) = self.probe.take() {
             if !probe.tick(self, preview, outputs, enabled) {
@@ -550,7 +564,11 @@ impl Editor {
         }
         self.overlays(preview);
     }
-    pub fn ui(&mut self, ctx: &egui::Context, outputs: &mut [bool; 2]) -> egui::Rect {
+    pub fn ui(
+        &mut self,
+        ctx: &egui::Context,
+        outputs: &mut std::collections::BTreeSet<u64>,
+    ) -> egui::Rect {
         self.poll();
         mapping::apply_theme(ctx);
         let mut action = None;
@@ -590,14 +608,6 @@ impl Editor {
                 });
             });
             ui.horizontal(|ui| {
-                for (i, enabled) in outputs.iter_mut().enumerate() {
-                    let v = &self.doc.viewports[i];
-                    ui.colored_label(
-                        egui::Color32::from_rgb(v.color[0], v.color[1], v.color[2]),
-                        "■",
-                    );
-                    ui.checkbox(enabled, format!("{} output", v.name));
-                }
                 let mut test = self.doc.test_background;
                 if ui
                     .add_enabled(
@@ -632,7 +642,7 @@ impl Editor {
             ui.label(if loading{"Loading / saving — outputs keep the last ready composition"}else if self.engine.applied()!=self.revision{"Preparing changes — outputs keep the last ready composition"}else{"Live • canvas pixels • drag to move / corner handles resize • Cmd+D duplicate • Delete • Cmd+Z / Shift+Cmd+Z"});
         });
         if self.mode == Mode::Viewports {
-            self.viewport_panel(ctx);
+            self.viewport_panel(ctx, outputs);
         } else {
             egui::SidePanel::left("editor_layers")
                 .default_width(210.)

@@ -1,5 +1,7 @@
 # Canvas dimensions, output mapping and fonts — review milestone
 
+Current dynamic counts, dimensions, schema and verification supersede the fixed-two-output scope below: see [dynamic viewports](dynamic-viewports.md). Earlier measurements and limitations are retained.
+
 October 29, 2026. WIP remote-review checkpoint on `feature/canvas-mapping`, based on canvas-editor checkpoint `7be441ed18e5bf97aa73fbda5052477bfc6407e9`. Diagnostic executables remain available. This expands the editor; it does not accept first-canvas, fix the operator transition pause, or establish production readiness.
 
 ## Run

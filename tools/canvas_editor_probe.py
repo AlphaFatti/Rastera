@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = 'Rastera — Canvas Editor — Operator / UI preview (automated probe)'
-SIDES = {side: 'Rastera — Native clean output — ' + side.title() + ' (automated probe)' for side in ['left', 'right']}
+SIDES = {side: 'Rastera — Native clean output — ' + side.title() + (' [ID 1]' if side == 'left' else ' [ID 2]') + ' (automated probe)' for side in ['left', 'right']}
 
 
 def fixtures(folder):
@@ -103,7 +103,7 @@ def main():
             if args.mapping:
                 doc = json.loads((folder/('selection.rastera.json' if args.selection else 'mapping.rastera.json')).read_text())
                 for side, viewport in zip(['left','right'], doc['viewports']):
-                    SIDES[side] = 'Rastera — Native clean output — '+viewport['name']+' (automated probe)'
+                    SIDES[side] = 'Rastera — Native clean output — '+viewport['name']+f" [ID {viewport['id']}] (automated probe)"
             window(ROOT, 'layout', 20, 50, 1500, 680)
             for side, x in [('left', 20), ('right', 700)]:
                 window(SIDES[side], 'layout', x, 740, 640, 350)

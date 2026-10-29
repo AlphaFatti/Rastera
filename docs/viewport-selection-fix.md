@@ -1,5 +1,7 @@
 # Nested viewport selection correction
 
+Current dynamic counts, dimensions, schema and verification supersede the fixed-two-output scope below: see [dynamic viewports](dynamic-viewports.md). Earlier measurements and limitations are retained.
+
 October 29, 2026; `fix/viewport-selection`, based on `d4ce7f7d5ffe6b4e58424d7a0ffe196370712456`. Focused correction for remote review; first-canvas and human visual acceptance remain pending.
 
 ## Behavior

@@ -76,8 +76,8 @@ pub struct Layer {
 pub struct Document {
     pub version: u32,
     pub canvas: [u32; 2],
-    #[serde(default = "crate::mapping::defaults")]
-    pub viewports: [crate::mapping::Viewport; 2],
+    pub viewports: Vec<crate::mapping::Viewport>,
+    pub next_viewport_id: u64,
     pub next_id: Id,
     pub test_background: bool,
     pub images: BTreeMap<Id, ImageAsset>,
@@ -88,9 +88,10 @@ pub struct Document {
 impl Default for Document {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: 3,
             canvas: [WIDTH, HEIGHT],
             viewports: crate::mapping::defaults(),
+            next_viewport_id: 3,
             next_id: 1,
             test_background: false,
             images: BTreeMap::new(),
@@ -100,6 +101,59 @@ impl Default for Document {
     }
 }
 impl Document {
+    pub fn viewport(&self, id: u64) -> Option<&crate::mapping::Viewport> {
+        self.viewports.iter().find(|v| v.id == id)
+    }
+    pub fn viewport_mut(&mut self, id: u64) -> Option<&mut crate::mapping::Viewport> {
+        self.viewports.iter_mut().find(|v| v.id == id)
+    }
+    pub fn add_viewport(&mut self) -> Result<u64, String> {
+        if self.viewports.len() >= crate::mapping::MAX_VIEWPORTS {
+            return Err(format!(
+                "Viewport limit reached (maximum {})",
+                crate::mapping::MAX_VIEWPORTS
+            ));
+        }
+        let id = self.next_viewport_id;
+        self.next_viewport_id = id
+            .checked_add(1)
+            .filter(|&n| n < u64::MAX - 1024)
+            .ok_or("Viewport ID allocator exhausted")?;
+        let palette = [
+            crate::theme::SIGNAL_MINT,
+            crate::theme::ELECTRIC_YELLOW,
+            crate::theme::HOT_MAGENTA,
+            crate::theme::RETRO_LAVENDER,
+            [80, 190, 255, 255],
+            [255, 160, 70, 255],
+            [170, 240, 210, 255],
+            [240, 160, 220, 255],
+        ];
+        let mut name = format!("Viewport {id}");
+        while self.viewports.iter().any(|v| v.name == name) {
+            name.push('+');
+        }
+        let mut v = crate::mapping::Viewport {
+            id,
+            size: [1920, 1080],
+            name,
+            color: palette
+                .into_iter()
+                .find(|c| !self.viewports.iter().any(|v| v.color == *c))
+                .unwrap_or(palette[((id - 1) % 8) as usize]),
+            center: [0.; 2],
+            zoom: 1.,
+            rotation: 0.,
+        };
+        v.fit_canvas(self.canvas);
+        self.viewports.push(v);
+        Ok(id)
+    }
+    pub fn remove_viewport(&mut self, id: u64) -> bool {
+        let n = self.viewports.len();
+        self.viewports.retain(|v| v.id != id);
+        n != self.viewports.len()
+    }
     fn id(&mut self) -> Id {
         let id = self.next_id;
         self.next_id += 1;
@@ -227,14 +281,23 @@ impl Document {
             .map(|l| l.id)
     }
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != 2 {
-            return Err("Unsupported project version (expected v2)".into());
+        if self.version != 3 {
+            return Err("Unsupported project version (expected v3)".into());
         }
         crate::mapping::validate_canvas(self.canvas, 8192)?;
-        if self.viewports.iter().any(|v| !v.validate())
-            || self.viewports[0].id == self.viewports[1].id
+        let mut viewport_ids = BTreeSet::new();
+        if self.viewports.len() > crate::mapping::MAX_VIEWPORTS
+            || self
+                .viewports
+                .iter()
+                .any(|v| !v.validate() || !viewport_ids.insert(v.id))
+            || self.next_viewport_id <= viewport_ids.last().copied().unwrap_or(0)
+            || self.next_viewport_id > u64::MAX - 1024
         {
-            return Err("Invalid viewport identity or transform".into());
+            return Err(
+                "Invalid viewport identity, dimensions, transform, allocator or count (maximum 8)"
+                    .into(),
+            );
         }
         if self.layers.len() > 128 || self.images.len() > 256 || self.texts.len() > 256 {
             return Err("Project object limit exceeded".into());
@@ -412,7 +475,7 @@ pub fn resize_drag(
         aspect,
     )
 }
-#[derive(Default, Clone)]
+#[derive(Default, Clone, PartialEq)]
 pub struct History {
     undo: Vec<Document>,
     redo: Vec<Document>,
@@ -430,6 +493,7 @@ impl History {
     pub fn undo(&mut self, doc: &mut Document) -> bool {
         if let Some(mut prev) = self.undo.pop() {
             prev.next_id = prev.next_id.max(doc.next_id);
+            prev.next_viewport_id = prev.next_viewport_id.max(doc.next_viewport_id);
             self.redo.push(std::mem::replace(doc, prev));
             true
         } else {
@@ -439,6 +503,7 @@ impl History {
     pub fn redo(&mut self, doc: &mut Document) -> bool {
         if let Some(mut next) = self.redo.pop() {
             next.next_id = next.next_id.max(doc.next_id);
+            next.next_viewport_id = next.next_viewport_id.max(doc.next_viewport_id);
             self.undo.push(std::mem::replace(doc, next));
             true
         } else {
@@ -538,7 +603,28 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
             value["viewports"] = serde_json::to_value(crate::mapping::defaults()).unwrap();
         }
         Some(2) => {}
+        Some(3) => {}
         _ => return Err("Unsupported project schema version".into()),
+    }
+    if value["version"].as_u64() != Some(3) {
+        let viewports = value["viewports"]
+            .as_array_mut()
+            .ok_or("Missing legacy viewport list")?;
+        let mut high = 0;
+        for v in viewports {
+            let v = v.as_object_mut().ok_or("Invalid legacy viewport object")?;
+            v.insert("size".into(), serde_json::json!([1920, 1080]));
+            high = high.max(
+                v.get("id")
+                    .and_then(serde_json::Value::as_u64)
+                    .ok_or("Invalid legacy viewport ID")?,
+            );
+        }
+        value["next_viewport_id"] = high
+            .checked_add(1)
+            .ok_or("Viewport ID allocator overflow")?
+            .into();
+        value["version"] = 3.into();
     }
     let mut doc: Document = serde_json::from_value(value).map_err(|e| e.to_string())?;
     doc.validate()?;
@@ -792,6 +878,7 @@ mod tests {
         let mut legacy = serde_json::to_value(&original).unwrap();
         legacy["version"] = 1.into();
         legacy.as_object_mut().unwrap().remove("viewports");
+        legacy.as_object_mut().unwrap().remove("next_viewport_id");
         for t in legacy["texts"].as_object_mut().unwrap().values_mut() {
             t.as_object_mut().unwrap().remove("font");
         }
@@ -848,7 +935,7 @@ mod tests {
         assert!(saved.contains("../alpha.png"));
         assert_eq!(load_project(&path).unwrap(), doc);
         let bad = base.join("bad.json");
-        std::fs::write(&bad, saved.replace("\"version\": 2", "\"version\": 99")).unwrap();
+        std::fs::write(&bad, saved.replace("\"version\": 3", "\"version\": 99")).unwrap();
         assert!(load_project(&bad).is_err());
         std::fs::remove_file(&media).unwrap();
         assert!(load_project(&path).unwrap_err().contains("alpha.png"));

@@ -1,0 +1,220 @@
+{
+  "date": "2026-10-29",
+  "branch": "feature/dynamic-viewports",
+  "command": "python3 tools/dynamic_viewport_probe.py --out /tmp/rastera-dynamic-pending-read --foreground --capture",
+  "result": "passed; exit 0; focus restored; outstanding texture slots 0/4",
+  "pending_gpu_read": {
+    "viewport_id": 3,
+    "sampled_inflight": 1,
+    "mechanism": "Opt-in GPU-only private-buffer texel read gated for 50ms; no CPU frame readback; completion holds source lease",
+    "commit_host_s": 424470.301971458,
+    "complete_callback_host_s": 424470.353004667,
+    "gpu_end_host_s": 424470.352847375
+  },
+  "instances": [
+    {
+      "viewport_id": 0,
+      "instance_id": 1,
+      "event_counts": {
+        "schedule": 5,
+        "commit": 5,
+        "complete": 5,
+        "presented": 5
+      },
+      "zero_presentation_timestamps": 5,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 0
+    },
+    {
+      "viewport_id": 1,
+      "instance_id": 2,
+      "event_counts": {
+        "schedule": 3,
+        "commit": 3,
+        "complete": 3,
+        "presented": 2
+      },
+      "zero_presentation_timestamps": 2,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 1
+    },
+    {
+      "viewport_id": 2,
+      "instance_id": 3,
+      "event_counts": {
+        "schedule": 3,
+        "commit": 3,
+        "complete": 3,
+        "presented": 2
+      },
+      "zero_presentation_timestamps": 2,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 1
+    },
+    {
+      "viewport_id": 3,
+      "instance_id": 4,
+      "event_counts": {
+        "schedule": 6,
+        "commit": 6,
+        "complete": 6,
+        "presented": 6,
+        "probe_read_commit": 1,
+        "probe_read_complete": 1
+      },
+      "zero_presentation_timestamps": 6,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 0
+    },
+    {
+      "viewport_id": 3,
+      "instance_id": 8,
+      "event_counts": {
+        "schedule": 3,
+        "commit": 3,
+        "complete": 3,
+        "presented": 3
+      },
+      "zero_presentation_timestamps": 3,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 0
+    },
+    {
+      "viewport_id": 3,
+      "instance_id": 12,
+      "event_counts": {
+        "schedule": 7,
+        "commit": 7,
+        "complete": 7,
+        "presented": 4
+      },
+      "zero_presentation_timestamps": 4,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 3
+    },
+    {
+      "viewport_id": 4,
+      "instance_id": 5,
+      "event_counts": {
+        "schedule": 10,
+        "commit": 10,
+        "complete": 10,
+        "presented": 10
+      },
+      "zero_presentation_timestamps": 10,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 0
+    },
+    {
+      "viewport_id": 4,
+      "instance_id": 13,
+      "event_counts": {
+        "schedule": 7,
+        "commit": 7,
+        "complete": 7,
+        "presented": 7
+      },
+      "zero_presentation_timestamps": 7,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 0
+    },
+    {
+      "viewport_id": 5,
+      "instance_id": 6,
+      "event_counts": {
+        "schedule": 7,
+        "commit": 7,
+        "complete": 7,
+        "presented": 7
+      },
+      "zero_presentation_timestamps": 7,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 0
+    },
+    {
+      "viewport_id": 5,
+      "instance_id": 9,
+      "event_counts": {
+        "schedule": 3,
+        "commit": 3,
+        "complete": 3,
+        "presented": 3
+      },
+      "zero_presentation_timestamps": 3,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 0
+    },
+    {
+      "viewport_id": 5,
+      "instance_id": 14,
+      "event_counts": {
+        "schedule": 6,
+        "commit": 6,
+        "complete": 6,
+        "presented": 6
+      },
+      "zero_presentation_timestamps": 6,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 0
+    },
+    {
+      "viewport_id": 6,
+      "instance_id": 7,
+      "event_counts": {
+        "schedule": 7,
+        "commit": 7,
+        "complete": 7,
+        "presented": 7
+      },
+      "zero_presentation_timestamps": 7,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 0
+    },
+    {
+      "viewport_id": 6,
+      "instance_id": 15,
+      "event_counts": {
+        "schedule": 6,
+        "commit": 6,
+        "complete": 6,
+        "presented": 6
+      },
+      "zero_presentation_timestamps": 6,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 0
+    },
+    {
+      "viewport_id": 7,
+      "instance_id": 10,
+      "event_counts": {
+        "schedule": 1,
+        "commit": 1,
+        "complete": 1,
+        "presented": 1
+      },
+      "zero_presentation_timestamps": 1,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 0
+    },
+    {
+      "viewport_id": 7,
+      "instance_id": 11,
+      "event_counts": {
+        "schedule": 3,
+        "commit": 3,
+        "complete": 3,
+        "presented": 3
+      },
+      "zero_presentation_timestamps": 3,
+      "positive_presentation_timestamps": 0,
+      "unmatched_logged_drawable_commits": 0
+    }
+  ],
+  "limitations": [
+    "Local native event replay, not human acceptance or physical scanout.",
+    "Presentation zero timestamps are retained; counters alone do not prove visible continuity.",
+    "No minimize/capture continuity retest; previous operator and capture limitations remain.",
+    "Scratch PNGs/logs reside under /tmp and are not portable artifacts.",
+    "Unmatched logged drawable commits at consumer retirement/shutdown are preserved, not interpreted as physical drops. Probe GPU-only reads do not request presentation callbacks."
+  ]
+}

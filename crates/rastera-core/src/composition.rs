@@ -642,7 +642,12 @@ fn prepare(
         generation,
         meta: crate::mapping::FrameMeta {
             canvas: doc.canvas,
-            maps: doc.viewports.clone().map(|v| v.matrix()),
+            viewports: doc
+                .viewports
+                .iter()
+                .map(crate::mapping::FrameViewport::from)
+                .collect::<Vec<_>>()
+                .into(),
         },
         layers,
     })

@@ -15,3 +15,5 @@ cargo run --release --locked -p rastera-desktop --bin canvas-editor -- --project
 ```
 
 This media-free schema-2 fixture places the larger Right footprint around Left. Choose **Viewports**, select Right in the sidebar, then drag Left's name or outline. Right must stay put. Undo, try moving Right, and Option-click their shared area to cycle selection. Both clean windows show the diagnostic canvas through their own mappings.
+
+`dynamic-viewports.rastera.json` is a self-contained schema-3 diagnostic composition with seven named output proportions. Run `cargo run --release --locked -p rastera-desktop --bin canvas-editor -- --project=examples/dynamic-viewports.rastera.json --outputs=4`. Open additional windows independently in Viewports mode.

@@ -6,6 +6,12 @@ This WIP checkpoint does not signify milestone acceptance. Individual native tra
 
 Status recorded October 29, 2026. This is an engineering prototype, not a production live-show application. The architecture blueprint remains the long-term direction.
 
+## Dynamic viewports and custom output dimensions
+
+`feature/dynamic-viewports` builds on `4ee19523a890808e8a80a897205e4500884a1067`. The editor supports zero to eight stable logical viewport IDs, separate window lifetime, arbitrary validated logical output dimensions, all seven presets, undo/redo and schema-3 persistence with explicit v1/v2 migration. Frame metadata is immutable and looked up by ID by native consumers; the independent producer, bounded four-texture generations and completion-held leases remain. Workspace stays `#17151A`; baselines remain available. [Current controls, ownership and verification](dynamic-viewports.md).
+
+Thirty-four Rust tests and nine Python tests, required formatting/check/Clippy and the workspace release build pass. Native replay exercised four simultaneous proportions, a fifth live output, dimension Apply/undo, deletion before later active consumers, old leased metadata, output close/reopen, all-output removal, overlap cycling/drag/history and project save/reopen. An opt-in GPU-only pending read verified retirement with a completion-held texture lease; shutdown drained to zero outstanding slots. Existing native editor/selection replay also passed. These are programmatic checks, not human visual acceptance. Captured clean windows show fitted content, but presentation zero timestamps and unmatched logged callbacks remain recorded. Human checks, sustained eight-output behavior, fullscreen/display assignment, operator transition pause, capture limitations and milestone acceptance remain pending.
+
 ## Focused viewport-selection correction
 
 `fix/viewport-selection` builds on `d4ce7f7d5ffe6b4e58424d7a0ffe196370712456`. Names/outlines now select nested viewports ahead of another viewport's selected body; selected handles retain priority. Outline tolerance uses screen points. Option-click cycles stable viewport IDs without dragging or adding history; ordinary drags latch their chosen viewport. Native flags cross the updated pointer/replay bridge. Workspace is now `#17151A`, shared across panels/dialogs, preview margins and label backgrounds; accents/content colors are unchanged.

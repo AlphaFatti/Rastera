@@ -3,11 +3,12 @@ mod editor;
 use eframe::egui;
 use foreign_types::ForeignType;
 use rastera_core::{
+    mapping::FrameViewport,
     shared_frames::{FrameLease, FramePool, SharedCanvasProducer},
-    Slice,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     ffi::{c_char, c_void, CString},
     marker::PhantomData,
     ptr::NonNull,
@@ -25,15 +26,18 @@ struct NativeFrame {
     frame: u64,
     width: u32,
     height: u32,
-    maps: [[f32; 8]; 2],
+    viewports: *const FrameViewport,
+    viewport_count: u32,
+    reserved: u32,
 }
-const _: [(); 96] = [(); std::mem::size_of::<NativeFrame>()];
+const _: [(); 48] = [(); std::mem::size_of::<NativeFrame>()];
+const _: () = assert!(std::mem::offset_of!(NativeFrame, viewports) == 32);
+const _: () = assert!(std::mem::offset_of!(FrameViewport, matrix) == 16);
 unsafe extern "C" {
     fn rastera_shared_create(
         source: *mut c_void,
         host: *mut c_void,
-        role: i32,
-        slice: *const u32,
+        viewport_id: u64,
     ) -> *mut c_void;
     fn rastera_shared_destroy(handle: *mut c_void);
     fn rastera_shared_is_open(handle: *mut c_void) -> bool;
@@ -73,7 +77,9 @@ unsafe extern "C" fn rastera_shared_acquire(source: *mut c_void, out: *mut Nativ
         return false;
     };
     let frame = lease.frame_id;
-    let meta = lease.meta.clone();
+    let canvas = lease.meta.canvas;
+    let viewports = lease.meta.viewports.as_ptr();
+    let viewport_count = lease.meta.viewports.len() as u32;
     let lease = Box::into_raw(Box::new(lease)).cast();
     // SAFETY: native caller passes a valid out pointer, and must release once.
     unsafe {
@@ -81,9 +87,11 @@ unsafe extern "C" fn rastera_shared_acquire(source: *mut c_void, out: *mut Nativ
             texture,
             lease,
             frame,
-            width: meta.canvas[0],
-            height: meta.canvas[1],
-            maps: meta.maps,
+            width: canvas[0],
+            height: canvas[1],
+            viewports,
+            viewport_count,
+            reserved: 0,
         });
     }
     true
@@ -131,11 +139,10 @@ struct Consumer {
     _main: PhantomData<Rc<()>>,
 }
 impl Consumer {
-    fn new(pool: &Arc<Pool>, host: *mut c_void, role: i32, slice: Slice) -> std::io::Result<Self> {
+    fn new(pool: &Arc<Pool>, host: *mut c_void, viewport_id: u64) -> std::io::Result<Self> {
         let source = Box::into_raw(Box::new(pool.clone()));
-        let rect = [slice.x, slice.y, slice.width, slice.height];
         // SAFETY: called on eframe main; host is either the live AppKit view or nil.
-        let handle = unsafe { rastera_shared_create(source.cast(), host, role, rect.as_ptr()) };
+        let handle = unsafe { rastera_shared_create(source.cast(), host, viewport_id) };
         match NonNull::new(handle) {
             Some(handle) => Ok(Self {
                 handle,
@@ -168,7 +175,9 @@ impl Drop for Consumer {
 }
 struct App {
     preview: Option<Consumer>,
-    outputs: [Option<Consumer>; 2],
+    outputs: BTreeMap<u64, Consumer>,
+    open_outputs: BTreeSet<u64>,
+    initial_output_count: Option<usize>,
     producer: Option<SharedCanvasProducer>,
     stop: mpsc::Sender<()>,
     monitor: Option<thread::JoinHandle<()>>,
@@ -193,75 +202,109 @@ impl eframe::App for App {
             ));
         }
         ctx.request_repaint_after(Duration::from_secs_f64(1.0 / 60.0));
-        if let Some(editor) = &mut self.editor {
-            // Retire native-close handles before checkbox input; a reopen click in
-            // the first UI frame after close must create a fresh consumer.
-            for output in &mut self.outputs {
-                if output.as_ref().is_some_and(|o| !o.open()) {
-                    *output = None;
-                }
-            }
+        // Native close retires only that ID, before editor controls can explicitly reopen it.
+        let closed: Vec<_> = self
+            .outputs
+            .iter()
+            .filter(|(_, c)| !c.open())
+            .map(|(&id, _)| id)
+            .collect();
+        for id in closed {
+            self.outputs.remove(&id);
+            self.open_outputs.remove(&id);
+        }
+        let definitions = if let Some(editor) = &mut self.editor {
             if let Some(preview) = &self.preview {
                 editor.pointers(preview, ctx);
             }
-            let mut enabled =
-                std::array::from_fn(|i| self.outputs[i].as_ref().is_some_and(Consumer::open));
-            let area = editor.ui(ctx, &mut enabled);
+            let area = editor.ui(ctx, &mut self.open_outputs);
             if let Some(preview) = &self.preview {
                 editor.native_layout(preview, ctx, area);
                 if editor.settings_requested() {
                     editor.settings_menu(preview);
                 }
-                editor.probe_tick(preview, &self.outputs, &mut enabled);
+                editor.probe_tick(preview, &self.outputs, &mut self.open_outputs);
             }
-            let pool = &self.producer.as_ref().unwrap().pool;
-            for (i, wanted) in enabled.into_iter().enumerate() {
-                // Native close can occur during a modal file panel inside ui().
-                // It wins over the pre-panel checkbox snapshot; do not auto-reopen.
-                if !wanted || self.outputs[i].as_ref().is_some_and(|c| !c.open()) {
-                    self.outputs[i] = None;
-                } else if self.outputs[i].is_none() {
-                    self.outputs[i] = None;
-                    match Consumer::new(
-                        pool,
-                        std::ptr::null_mut(),
-                        (i + 1) as i32,
-                        if i == 0 { Slice::LEFT } else { Slice::RIGHT },
-                    ) {
-                        Ok(c) => self.outputs[i] = Some(c),
-                        Err(e) => log(format!("shared_error open_output={i} message={e}\n")),
-                    }
-                }
-            }
-            for (i, out) in self.outputs.iter().enumerate() {
-                if let Some(out) = out {
-                    let name =
-                        CString::new(editor.doc.viewports[i].name.replace('\0', "")).unwrap();
-                    unsafe {
-                        rastera_shared_title(out.handle.as_ptr(), name.as_ptr());
-                    }
-                }
-            }
+            editor
+                .doc
+                .viewports
+                .iter()
+                .map(|v| (v.id, v.name.clone()))
+                .collect::<BTreeMap<_, _>>()
         } else {
-            egui::TopBottomPanel::top("controls").exact_height(170.0).show(ctx,|ui| {
-            ui.heading("Operator / UI preview — shared canvas integration");
-            ui.monospace(format!("UI elapsed {:.3}s · callback {} (UI may pause during native transitions)",self.origin.elapsed().as_secs_f64(),self.callbacks));
-            ui.label("Preview below and clean outputs read completed frames from one core producer.");
-            let pool=&self.producer.as_ref().unwrap().pool;
-            for (i,name) in ["Left native clean output","Right native clean output"].iter().enumerate() {
-                if self.outputs[i].as_ref().is_some_and(|c|!c.open()) { self.outputs[i]=None; }
-                let mut enabled=self.outputs[i].is_some();
-                if ui.checkbox(&mut enabled,*name).changed() {
-                    if enabled {
-                        match Consumer::new(pool,std::ptr::null_mut(),(i+1) as i32,if i==0 {Slice::LEFT}else{Slice::RIGHT}) {
-                            Ok(c)=>self.outputs[i]=Some(c),Err(e)=>log(format!("shared_error open_output={i} message={e}\n")),
+            egui::TopBottomPanel::top("controls").exact_height(170.).show(ctx,|ui|{
+                ui.heading("Operator / UI preview — shared canvas integration");
+                ui.monospace(format!("UI elapsed {:.3}s · callback {}",self.origin.elapsed().as_secs_f64(),self.callbacks));
+                for (id,name) in [(1,"Left"),(2,"Right")] {
+                    let mut open=self.open_outputs.contains(&id);
+                    if ui.checkbox(&mut open,format!("{name} native clean output")).changed(){if open{self.open_outputs.insert(id);}else{self.open_outputs.remove(&id);}}
+                }
+                ui.label("Native canvas preview: full 3840 × 1080. Source dimensions never follow window size.");
+            });
+            egui::CentralPanel::default().show(ctx, |_| {});
+            [(1, "Left".to_owned()), (2, "Right".to_owned())]
+                .into_iter()
+                .collect()
+        };
+        // Removal, window close and project edits never reassign a consumer by position.
+        self.open_outputs.retain(|id| definitions.contains_key(id));
+        let closed: Vec<_> = self
+            .outputs
+            .iter()
+            .filter(|(_, c)| !c.open())
+            .map(|(&id, _)| id)
+            .collect();
+        for id in closed {
+            self.outputs.remove(&id);
+            self.open_outputs.remove(&id);
+        }
+        self.outputs.retain(|id, _| self.open_outputs.contains(id)); // Drop joins/drains GPU readers.
+        if self.initial_output_count.is_some()
+            && self.editor.as_ref().is_some_and(|e| !e.busy_loading())
+        {
+            let count = self.initial_output_count.take().unwrap();
+            if let Some(editor) = &self.editor {
+                self.open_outputs
+                    .extend(editor.doc.viewports.iter().take(count).map(|v| v.id));
+            }
+        }
+        let pool = &self.producer.as_ref().unwrap().pool;
+        let mut failures = vec![];
+        for &id in &self.open_outputs {
+            if let std::collections::btree_map::Entry::Vacant(entry) = self.outputs.entry(id) {
+                // A new logical definition may still be preparing. Wait for its completed frame.
+                if !pool
+                    .acquire()
+                    .is_some_and(|f| f.meta.viewport(id).is_some())
+                {
+                    continue;
+                }
+                match Consumer::new(pool, std::ptr::null_mut(), id) {
+                    Ok(c) => {
+                        entry.insert(c);
+                    }
+                    Err(error) => {
+                        failures.push(id);
+                        if let Some(editor) = &mut self.editor {
+                            editor.error = Some(format!("Could not open viewport {id}: {error}"));
                         }
-                    } else { self.outputs[i]=None; }
+                        log(format!(
+                            "shared_error open_viewport_id={id} message={error}\n"
+                        ));
+                    }
                 }
             }
-            ui.label("Native canvas preview: full 3840 × 1080. Source dimensions never follow window size.");
-        });
-            egui::CentralPanel::default().show(ctx, |_| {});
+        }
+        for id in failures {
+            self.open_outputs.remove(&id);
+        }
+        for (&id, out) in self.outputs.iter().filter(|_| self.editor.is_some()) {
+            if let Some(name) = definitions.get(&id) {
+                let name = CString::new(name.replace('\0', "")).unwrap();
+                unsafe {
+                    rastera_shared_title(out.handle.as_ptr(), name.as_ptr());
+                }
+            }
         }
     }
 }
@@ -271,7 +314,7 @@ impl Drop for App {
         if let Some(m) = self.monitor.take() {
             let _ = m.join();
         }
-        self.outputs = [None, None];
+        self.outputs.clear();
         self.preview = None;
         let pool = self.producer.as_ref().unwrap().pool.clone();
         self.producer = None; // Join producer AFTER every native consumer has stopped.
@@ -375,22 +418,34 @@ fn run_mode(editor_mode: bool) -> eframe::Result {
                 _ => return Err("AppKit view required".into()),
             };
             // First consumer is the embedded full-canvas native preview. No eframe texture registration.
-            let preview = Consumer::new(&producer.pool, host, 0, Slice::FULL)?;
-            let mut outputs = [None, None];
-            let count = std::env::args()
+            let preview = Consumer::new(&producer.pool, host, 0)?;
+            let count: usize = std::env::args()
                 .find_map(|a| a.strip_prefix("--outputs=").map(str::to_owned))
-                .unwrap_or_else(|| "2".into());
-            let count: usize = count.parse()?;
-            if count > 2 {
-                return Err("--outputs must be 0, 1 or 2".into());
+                .unwrap_or_else(|| "2".into())
+                .parse()?;
+            if count > rastera_core::mapping::MAX_VIEWPORTS {
+                return Err("--outputs exceeds viewport limit 8".into());
             }
-            for (i, out) in outputs.iter_mut().enumerate().take(count) {
-                *out = Some(Consumer::new(
-                    &producer.pool,
-                    std::ptr::null_mut(),
-                    (i + 1) as i32,
-                    if i == 0 { Slice::LEFT } else { Slice::RIGHT },
-                )?);
+            let mut outputs = BTreeMap::new();
+            let mut open_outputs = BTreeSet::new();
+            let initial_output_count =
+                if editor_mode && std::env::args().any(|a| a.starts_with("--project=")) {
+                    Some(count)
+                } else {
+                    None
+                };
+            if let Some(frame) = producer
+                .pool
+                .acquire()
+                .filter(|_| initial_output_count.is_none())
+            {
+                for v in frame.meta.viewports.iter().take(count) {
+                    open_outputs.insert(v.id);
+                    outputs.insert(
+                        v.id,
+                        Consumer::new(&producer.pool, std::ptr::null_mut(), v.id)?,
+                    );
+                }
             }
             let stats = producer.stats.clone();
             let skipped = producer.skipped.clone();
@@ -411,6 +466,8 @@ fn run_mode(editor_mode: bool) -> eframe::Result {
             Ok(Box::new(App {
                 preview: Some(preview),
                 outputs,
+                open_outputs,
+                initial_output_count,
                 producer: Some(producer),
                 stop,
                 monitor: Some(monitor),

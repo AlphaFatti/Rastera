@@ -15,8 +15,16 @@
 #include <thread>
 #include <vector>
 #include <cstring>
-struct SharedFrame { void *texture; void *lease; uint64_t frame; uint32_t width,height; float maps[16]; };
-static_assert(sizeof(SharedFrame)==96,"Shared frame ABI must match Rust");
+#include <string>
+#include <cstddef>
+struct FrameViewport {uint64_t id;uint32_t width,height;float matrix[8];};
+struct SharedFrame { void *texture; void *lease; uint64_t frame; uint32_t width,height; const FrameViewport *viewports;uint32_t viewportCount,reserved; };
+static_assert(sizeof(FrameViewport)==48&&offsetof(FrameViewport,matrix)==16,"Viewport ABI must match Rust");
+static_assert(sizeof(SharedFrame)==48&&offsetof(SharedFrame,viewports)==32,"Shared frame ABI must match Rust");
+static const FrameViewport *viewportFor(const SharedFrame &frame,uint64_t id){
+    if(frame.viewportCount>8||(!frame.viewports&&frame.viewportCount))return nullptr;
+    for(uint32_t i=0;i<frame.viewportCount;++i)if(frame.viewports[i].id==id)return &frame.viewports[i];return nullptr;
+}
 extern "C" bool rastera_shared_acquire(void *, SharedFrame *);
 extern "C" void rastera_shared_release(void *);
 extern "C" void rastera_shared_fit(uint32_t,uint32_t,float,float,float *);
@@ -24,14 +32,15 @@ extern "C" void rastera_editor_fit(uint32_t,uint32_t,float,float,float,float *);
 extern "C" void rastera_theme_workspace(float *);
 namespace {
 struct Event { const char *kind; uint64_t frame,drawable,seq; double host,time; };
+std::atomic<uint64_t> nextConsumerInstance{1};
 struct Stats {
-    const char *role;
+    std::string role;uint64_t id,instance;
     std::mutex mutex;
     std::deque<Event> events;
     std::atomic<uint64_t> ticks{0},submitted{0},completed{0},presented{0},zero{0},errors{0},lost{0},busy{0};
     std::atomic<unsigned> inflight{0},maxInflight{0};
     std::atomic<bool> stop{false};
-    explicit Stats(const char *r):role(r) {}
+    explicit Stats(uint64_t n):role(n==0?"preview":n==1?"left":n==2?"right":("viewport-"+std::to_string(n))),id(n),instance(nextConsumerInstance.fetch_add(1)) {}
     void record(const char *kind,uint64_t frame,uint64_t drawable,double time=0,uint64_t seq=0) {
         const double now=CACurrentMediaTime();
         std::lock_guard<std::mutex> guard(mutex);
@@ -44,8 +53,8 @@ std::vector<std::weak_ptr<Stats>> registry;
 void report(const std::shared_ptr<Stats> &s) {
     std::deque<Event> rows;
     { std::lock_guard<std::mutex> guard(s->mutex); rows.swap(s->events); }
-    for(const auto &e:rows) std::fprintf(stderr,"shared_event role=%s kind=%s frame=%llu drawable=%llu seq=%llu callback_host_s=%.9f gpu_or_presented_host_s=%.9f\n",s->role,e.kind,(unsigned long long)e.frame,(unsigned long long)e.drawable,(unsigned long long)e.seq,e.host,e.time);
-    std::fprintf(stderr,"shared_interval role=%s host_s=%.9f ticks=%llu submitted=%llu completed=%llu presented_callbacks=%llu zero=%llu errors=%llu lost=%llu busy=%llu inflight=%u max_inflight=%u\n",s->role,CACurrentMediaTime(),(unsigned long long)s->ticks.load(),(unsigned long long)s->submitted.load(),(unsigned long long)s->completed.load(),(unsigned long long)s->presented.load(),(unsigned long long)s->zero.load(),(unsigned long long)s->errors.load(),(unsigned long long)s->lost.load(),(unsigned long long)s->busy.load(),s->inflight.load(),s->maxInflight.load());
+    for(const auto &e:rows) std::fprintf(stderr,"shared_event role=%s viewport_id=%llu instance_id=%llu kind=%s frame=%llu drawable=%llu seq=%llu callback_host_s=%.9f gpu_or_presented_host_s=%.9f\n",s->role.c_str(),(unsigned long long)s->id,(unsigned long long)s->instance,e.kind,(unsigned long long)e.frame,(unsigned long long)e.drawable,(unsigned long long)e.seq,e.host,e.time);
+    std::fprintf(stderr,"shared_interval role=%s viewport_id=%llu instance_id=%llu host_s=%.9f ticks=%llu submitted=%llu completed=%llu presented_callbacks=%llu zero=%llu errors=%llu lost=%llu busy=%llu inflight=%u max_inflight=%u\n",s->role.c_str(),(unsigned long long)s->id,(unsigned long long)s->instance,CACurrentMediaTime(),(unsigned long long)s->ticks.load(),(unsigned long long)s->submitted.load(),(unsigned long long)s->completed.load(),(unsigned long long)s->presented.load(),(unsigned long long)s->zero.load(),(unsigned long long)s->errors.load(),(unsigned long long)s->lost.load(),(unsigned long long)s->busy.load(),s->inflight.load(),s->maxInflight.load());
 }
 }
 // Operator-only surface state. Never sampled by the canvas producer or clean windows.
@@ -123,10 +132,9 @@ API_AVAILABLE(macos(14.0))
     id<MTLCommandQueue> _queue;
     id<MTLRenderPipelineState> _pipeline;
     void *_source;
-    uint32_t _slice[4];
     BOOL _embedded;
-    int _role;
-    uint32_t _lastWidth,_lastHeight; float _lastMaps[16];
+    uint64_t _viewportID;
+    uint32_t _lastWidth,_lastHeight,_lastLogical[2]; float _lastMaps[8];
     std::atomic<float> _margin;
     BOOL _closed;
     std::shared_ptr<Stats> _stats;
@@ -134,9 +142,12 @@ API_AVAILABLE(macos(14.0))
     dispatch_semaphore_t _slots;
     dispatch_group_t _work;
 }
-- (BOOL)start:(void *)source host:(NSView *)host role:(int)role slice:(const uint32_t *)slice;
+- (BOOL)start:(void *)source host:(NSView *)host viewport:(uint64_t)viewportID;
 - (void)stop;
 - (BOOL)isOpen;
+- (uint32_t)inflightForProbe;
+- (uint64_t)instanceForProbe;
+- (BOOL)pendingReadForProbe;
 - (void)editorRect:(const float *)rect screen:(const float *)screen selection:(const float *)selected flags:(uint32_t)flags;
 - (BOOL)pollPointer:(EditorPointer *)out;
 - (void)replay:(uint32_t)kind x:(float)x y:(float)y modifiers:(uint64_t)modifiers;
@@ -147,18 +158,53 @@ API_AVAILABLE(macos(14.0))
 - (void)outputTitle:(NSString *)name;
 @end
 @implementation SharedCanvasConsumer
-- (BOOL)start:(void *)source host:(NSView *)host role:(int)role slice:(const uint32_t *)slice {
+- (uint64_t)instanceForProbe {return _stats->instance;}
+- (uint32_t)inflightForProbe {return _stats->inflight.load();}
+// Diagnostic-only actual GPU reader. The normal render/present callback is unchanged.
+// A shared event keeps this single private-buffer blit pending for 50 ms, so removal
+// exercises the existing completion-held lease and shutdown group with work in flight.
+- (BOOL)pendingReadForProbe {
+    NSCAssert(NSThread.isMainThread,@"Diagnostic submission on main");
+    BOOL enabled=NO;for(NSString *arg in NSProcessInfo.processInfo.arguments)if([arg isEqual:@"--dynamic-probe"])enabled=YES;
+    if(!enabled||_embedded||dispatch_semaphore_wait(_slots,DISPATCH_TIME_NOW)!=0)return NO;
+    SharedFrame frame{};
+    if(!rastera_shared_acquire(_source,&frame)){dispatch_semaphore_signal(_slots);return NO;}
+    id<MTLTexture> source=(__bridge id<MTLTexture>)frame.texture;
+    id<MTLSharedEvent> event=[_device newSharedEvent];
+    id<MTLBuffer> scratch=[_device newBufferWithLength:256 options:MTLResourceStorageModePrivate];
+    id<MTLCommandBuffer> command=[_queue commandBuffer];
+    if(!event||!scratch||!command||!viewportFor(frame,_viewportID)||source.device!=_device){rastera_shared_release(frame.lease);dispatch_semaphore_signal(_slots);return NO;}
+    [command encodeWaitForEvent:event value:1];
+    id<MTLBlitCommandEncoder> blit=[command blitCommandEncoder];
+    if(!blit){rastera_shared_release(frame.lease);dispatch_semaphore_signal(_slots);return NO;}
+    [blit copyFromTexture:source sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0) sourceSize:MTLSizeMake(1,1,1) toBuffer:scratch destinationOffset:0 destinationBytesPerRow:256 destinationBytesPerImage:256];[blit endEncoding];
+    auto stats=_stats;dispatch_group_t work=_work;dispatch_semaphore_t slots=_slots;
+    unsigned active=++stats->inflight;unsigned maximum=stats->maxInflight.load();while(active>maximum&&!stats->maxInflight.compare_exchange_weak(maximum,active)){}
+    ++stats->submitted;dispatch_group_enter(work);
+    [command addCompletedHandler:^(id<MTLCommandBuffer> done){
+        stats->record("probe_read_complete",frame.frame,0,done.GPUEndTime);
+        if(done.status==MTLCommandBufferStatusError)++stats->errors;
+        rastera_shared_release(frame.lease);++stats->completed;--stats->inflight;dispatch_semaphore_signal(slots);dispatch_group_leave(work);
+    }];
+    stats->record("probe_read_commit",frame.frame,0);[command commit];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,50*NSEC_PER_MSEC),dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{event.signaledValue=1;});
+    return YES;
+}
+- (BOOL)start:(void *)source host:(NSView *)host viewport:(uint64_t)viewportID {
     NSCAssert(NSThread.isMainThread,@"Lifecycle on main");
-    _margin.store(0);_role=role;_source=source; _embedded=host!=nil; std::memcpy(_slice,slice,sizeof(_slice));
-    _stats=std::make_shared<Stats>(role==0?"preview":role==1?"left":"right");
+    _margin.store(0);_viewportID=viewportID;_source=source; _embedded=host!=nil;
+    _stats=std::make_shared<Stats>(viewportID);
     _slots=dispatch_semaphore_create(2); _work=dispatch_group_create();
     SharedFrame first{};
     if(!rastera_shared_acquire(source,&first)) return NO;
     id<MTLTexture> texture=(__bridge id<MTLTexture>)first.texture;
     _device=texture.device; // Use the exact producer MTLDevice, not an assumed default GPU.
     const bool compatible=texture.width>0 && texture.height>0 && texture.pixelFormat==MTLPixelFormatRGBA8Unorm;
-    std::fprintf(stderr,"shared_device role=%s registry_id=%llu exact_producer_device=1 dimensions=%lux%lu compatible=%d reduce_motion=%d main_thread=1\n",_stats->role,(unsigned long long)_device.registryID,(unsigned long)texture.width,(unsigned long)texture.height,compatible,NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion);
+    std::fprintf(stderr,"shared_device role=%s viewport_id=%llu instance_id=%llu registry_id=%llu exact_producer_device=1 dimensions=%lux%lu compatible=%d reduce_motion=%d main_thread=1\n",_stats->role.c_str(),(unsigned long long)_stats->id,(unsigned long long)_stats->instance,(unsigned long long)_device.registryID,(unsigned long)texture.width,(unsigned long)texture.height,compatible,NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion);
+    const FrameViewport *initial=viewportFor(first,viewportID);
+    uint32_t logicalWidth=viewportID==0?first.width:(initial?initial->width:0),logicalHeight=viewportID==0?first.height:(initial?initial->height:0);
     rastera_shared_release(first.lease);
+    if(!logicalWidth||!logicalHeight)return NO;
     if(!compatible) return NO;
     _queue=[_device newCommandQueue];
     NSString *shader=[NSString stringWithUTF8String:R"MSL(
@@ -193,12 +239,12 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
         _view.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
         [host addSubview:_view];
     } else {
-        _window=[[NSWindow alloc] initWithContentRect:NSMakeRect(role==1?20:520,120,480,270)
+        _window=[[NSWindow alloc] initWithContentRect:NSMakeRect(20+((viewportID-1)%4)*350,120,480,std::clamp(480.*logicalHeight/logicalWidth,80.,540.))
             styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable
             backing:NSBackingStoreBuffered defer:NO];
-        _window.title=role==1?@"Rastera — Native clean output — Left":@"Rastera — Native clean output — Right";
+        _window.title=[NSString stringWithFormat:@"Rastera — Native clean output — %@",viewportID==1?@"Left":viewportID==2?@"Right":[NSString stringWithFormat:@"Viewport %llu",(unsigned long long)viewportID]];
         _window.releasedWhenClosed=NO; _window.delegate=self;
-        _view=[[SharedCanvasView alloc] initWithFrame:NSMakeRect(0,0,480,270)];
+        _view=[[SharedCanvasView alloc] initWithFrame:NSMakeRect(0,0,_window.contentView.bounds.size.width,_window.contentView.bounds.size.height)];
         _window.contentView=_view;
     }
     _view.wantsLayer=YES; _layer=(CAMetalLayer *)_view.layer;
@@ -212,7 +258,7 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
     }
     [_view resizeDrawable];
     { std::lock_guard<std::mutex> guard(registryMutex); registry.push_back(_stats); }
-    std::fprintf(stderr,"shared_open role=%s x=%u y=%u width=%u height=%u animation_readback=%ld\n",_stats->role,_slice[0],_slice[1],_slice[2],_slice[3],(long)_window.animationBehavior);
+    std::fprintf(stderr,"shared_open role=%s viewport_id=%llu instance_id=%llu width=%u height=%u animation_readback=%ld\n",_stats->role.c_str(),(unsigned long long)_stats->id,(unsigned long long)_stats->instance,logicalWidth,logicalHeight,(long)_window.animationBehavior);
     SharedCanvasConsumer *owner=self;
     _worker=std::thread([owner] {
         @autoreleasepool {
@@ -236,6 +282,8 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
         if(dispatch_semaphore_wait(_slots,DISPATCH_TIME_NOW)!=0) { ++stats->busy; return; }
         SharedFrame frame{};
         if(!rastera_shared_acquire(_source,&frame)) { dispatch_semaphore_signal(_slots); return; }
+        const FrameViewport *selected=viewportFor(frame,_viewportID);
+        if(_viewportID!=0&&!selected){stats->record("missing_viewport",frame.frame,0,0,seq);rastera_shared_release(frame.lease);dispatch_semaphore_signal(_slots);return;}
         id<MTLTexture> source=(__bridge id<MTLTexture>)frame.texture;
         id<CAMetalDrawable> drawable=update.drawable;
         if(source.device!=_device || source.device.registryID!=_device.registryID || !drawable ||
@@ -252,14 +300,14 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
         id<MTLRenderCommandEncoder> encoder=[command renderCommandEncoderWithDescriptor:pass];
         if(!encoder) { ++stats->errors; rastera_shared_release(frame.lease); dispatch_semaphore_signal(_slots); return; }
         struct Mapping { float row0[4],row1[4],fit[4],logical[4],background[4]; } mapping{};
-        if(_role==0){mapping.row0[0]=1;mapping.row1[1]=1;mapping.logical[0]=frame.width;mapping.logical[1]=frame.height;}
-        else{std::memcpy(mapping.row0,frame.maps+(_role-1)*8,8*sizeof(float));mapping.logical[0]=1920;mapping.logical[1]=1080;}
+        if(_viewportID==0){mapping.row0[0]=1;mapping.row1[1]=1;mapping.logical[0]=frame.width;mapping.logical[1]=frame.height;}
+        else{std::memcpy(mapping.row0,selected->matrix,4*sizeof(float));std::memcpy(mapping.row1,selected->matrix+4,4*sizeof(float));mapping.logical[0]=selected->width;mapping.logical[1]=selected->height;}
         if(_embedded&&_margin.load()>0){rastera_editor_fit(frame.width,frame.height,drawable.texture.width,drawable.texture.height,_margin.load(),mapping.fit);rastera_theme_workspace(mapping.background);}
         else rastera_shared_fit(mapping.logical[0],mapping.logical[1],drawable.texture.width,drawable.texture.height,mapping.fit);
         mapping.background[3]=1;
-        if(frame.width!=_lastWidth||frame.height!=_lastHeight||std::memcmp(frame.maps,_lastMaps,sizeof(_lastMaps))){
-            _lastWidth=frame.width;_lastHeight=frame.height;std::memcpy(_lastMaps,frame.maps,sizeof(_lastMaps));
-            fprintf(stderr,"shared_mapping role=%s frame=%llu canvas_w=%u canvas_h=%u row00=%.9g row01=%.9g row02=%.9g row10=%.9g row11=%.9g row12=%.9g\n",stats->role,(unsigned long long)frame.frame,frame.width,frame.height,mapping.row0[0],mapping.row0[1],mapping.row0[2],mapping.row1[0],mapping.row1[1],mapping.row1[2]);
+        if(frame.width!=_lastWidth||frame.height!=_lastHeight||std::memcmp(mapping.row0,_lastMaps,4*sizeof(float))||std::memcmp(mapping.row1,_lastMaps+4,4*sizeof(float))||mapping.logical[0]!=_lastLogical[0]||mapping.logical[1]!=_lastLogical[1]){
+            _lastWidth=frame.width;_lastHeight=frame.height;std::memcpy(_lastMaps,mapping.row0,4*sizeof(float));std::memcpy(_lastMaps+4,mapping.row1,4*sizeof(float));_lastLogical[0]=mapping.logical[0];_lastLogical[1]=mapping.logical[1];
+            fprintf(stderr,"shared_mapping role=%s viewport_id=%llu instance_id=%llu frame=%llu canvas_w=%u canvas_h=%u logical_w=%u logical_h=%u row00=%.9g row01=%.9g row02=%.9g row10=%.9g row11=%.9g row12=%.9g\n",stats->role.c_str(),(unsigned long long)stats->id,(unsigned long long)stats->instance,(unsigned long long)frame.frame,frame.width,frame.height,_lastLogical[0],_lastLogical[1],mapping.row0[0],mapping.row0[1],mapping.row0[2],mapping.row1[0],mapping.row1[1],mapping.row1[2]);
         }
         [encoder setRenderPipelineState:_pipeline];
         [encoder setFragmentBytes:&mapping length:sizeof(mapping) atIndex:0];
@@ -317,7 +365,7 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
     NSMutableArray *list=[NSMutableArray array];for(uint32_t i=0;i<labelCount;++i){const auto &l=labels[i];[list addObject:@{@"x":@(l.x),@"y":@(l.y),@"text":@(l.text),@"color":[NSColor colorWithSRGBRed:l.color[0] green:l.color[1] blue:l.color[2] alpha:l.color[3]]}];}
     if(![o->labels isEqual:list])changed=YES;o->labels=list;if(changed)o.needsDisplay=YES;
 }
-- (void)outputTitle:(NSString *)name {if(_embedded)return;NSString *title=[@"Rastera — Native clean output — " stringByAppendingString:name];for(NSString *arg in NSProcessInfo.processInfo.arguments)if([arg hasPrefix:@"--editor-probe="])title=[title stringByAppendingString:@" (automated probe)"];if(![_window.title isEqual:title])_window.title=title;}
+- (void)outputTitle:(NSString *)name {if(_embedded)return;NSString *title=[NSString stringWithFormat:@"Rastera — Native clean output — %@ [ID %llu]",name,(unsigned long long)_viewportID];for(NSString *arg in NSProcessInfo.processInfo.arguments)if([arg hasPrefix:@"--editor-probe="])title=[title stringByAppendingString:@" (automated probe)"];if(![_window.title isEqual:title])_window.title=title;}
 - (void)metrics:(float *)out {out[0]=_layer.drawableSize.width;out[1]=_layer.drawableSize.height;out[2]=_view.bounds.size.width>0?out[0]/_view.bounds.size.width:1;}
 - (int)settingsMenu {
     NSMenu *menu=[[NSMenu alloc]initWithTitle:@"Settings"];NSMenuItem *item=[[NSMenuItem alloc]initWithTitle:@"Canvas settings…" action:@selector(canvasSettingsChosen:) keyEquivalent:@""];item.target=self;[menu addItem:item];
@@ -348,17 +396,17 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
     _stats->stop=true;
     if(_worker.joinable()) _worker.join();
     const long result=dispatch_group_wait(_work,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC));
-    std::fprintf(stderr,"shared_stop role=%s host_s=%.9f gpu_drain=%s inflight=%u\n",_stats->role,CACurrentMediaTime(),result==0?"complete":"timeout",_stats->inflight.load());
+    std::fprintf(stderr,"shared_stop role=%s viewport_id=%llu instance_id=%llu host_s=%.9f gpu_drain=%s inflight=%u\n",_stats->role.c_str(),(unsigned long long)_stats->id,(unsigned long long)_stats->instance,CACurrentMediaTime(),result==0?"complete":"timeout",_stats->inflight.load());
     report(_stats);
 }
 - (void)windowWillClose:(NSNotification *)note { [self stop]; }
 - (void)detach { [self stop]; if(!_embedded) { _window.delegate=nil; [_window close]; } [_view removeFromSuperview]; }
 - (void)dealloc { NSCAssert(!_worker.joinable(),@"Must stop before release"); }
 @end
-extern "C" void *rastera_shared_create(void *source,void *host,int role,const uint32_t *slice) {
+extern "C" void *rastera_shared_create(void *source,void *host,uint64_t viewportID) {
     if(@available(macOS 14.0,*)) {
         SharedCanvasConsumer *consumer=[SharedCanvasConsumer new];
-        if(![consumer start:source host:(__bridge NSView *)host role:role slice:slice]) return nullptr;
+        if(![consumer start:source host:(__bridge NSView *)host viewport:viewportID]) return nullptr;
         return (__bridge_retained void *)consumer;
     }
     return nullptr;
@@ -443,3 +491,11 @@ extern "C" void rastera_editor_label_size(const char *text,float *out){
     NSCAssert(NSThread.isMainThread,@"Label measurement on main");
     NSSize size=[@(text) sizeWithAttributes:@{NSFontAttributeName:EditorLabelFont()}];out[0]=size.width;out[1]=size.height;
 }
+
+extern "C" uint32_t rastera_shared_inflight(void *handle){
+    if(@available(macOS 14.0,*)){return [(__bridge SharedCanvasConsumer *)handle inflightForProbe];}return 0;
+}
+
+extern "C" uint64_t rastera_shared_instance(void *handle){if(@available(macOS 14.0,*)){return [(__bridge SharedCanvasConsumer *)handle instanceForProbe];}return 0;}
+
+extern "C" bool rastera_shared_pending_read_probe(void *handle){if(@available(macOS 14.0,*)){return [(__bridge SharedCanvasConsumer *)handle pendingReadForProbe];}return false;}

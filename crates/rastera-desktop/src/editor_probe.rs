@@ -1,5 +1,7 @@
 //! Explicit, noninteractive native replay for busy test desktops. No system input.
 use super::*;
+#[path = "editor_dynamic_probe.rs"]
+mod dynamic;
 unsafe extern "C" {
     fn rastera_editor_close_output(handle: *mut std::ffi::c_void);
     fn rastera_editor_replay(
@@ -18,10 +20,14 @@ pub(super) struct Probe {
     handle: Option<[f32; 2]>,
     mapping: bool,
     selection: bool,
+    dynamic: Option<dynamic::Dynamic>,
 }
 impl Probe {
     pub fn new(folder: PathBuf) -> Self {
         Self {
+            dynamic: std::env::args()
+                .any(|a| a == "--dynamic-probe")
+                .then(|| dynamic::Dynamic::new(folder.clone())),
             folder,
             phase: 0,
             frame: 0,
@@ -44,11 +50,21 @@ impl Probe {
         &mut self,
         e: &mut Editor,
         preview: &Consumer,
-        outputs: &[Option<Consumer>; 2],
-        enabled: &mut [bool; 2],
+        outputs: &std::collections::BTreeMap<u64, Consumer>,
+        enabled: &mut std::collections::BTreeSet<u64>,
     ) -> bool {
         if e.busy_file || e.pending_load.is_some() || e.engine.applied() != e.revision {
             return false;
+        }
+        if let Some(dynamic) = &mut self.dynamic {
+            return match dynamic.tick(e, preview, outputs, enabled) {
+                Ok(done) => done,
+                Err(error) => {
+                    log(format!("dynamic_viewport_probe failed=1 error={error}\n"));
+                    e.error = Some(error);
+                    true
+                }
+            };
         }
         let result = self.step(e, preview, outputs, enabled);
         match result {
@@ -67,8 +83,8 @@ impl Probe {
         &mut self,
         e: &mut Editor,
         p: &Consumer,
-        outputs: &[Option<Consumer>; 2],
-        enabled: &mut [bool; 2],
+        outputs: &std::collections::BTreeMap<u64, Consumer>,
+        enabled: &mut std::collections::BTreeSet<u64>,
     ) -> Result<bool, String> {
         if let Some(error) = &e.error {
             if self.phase != 18 && self.phase != 56 && self.phase != 57 {
@@ -230,28 +246,31 @@ impl Probe {
                 // SAFETY: main-only, live native output; same performClose lifecycle as chrome.
                 unsafe {
                     rastera_editor_close_output(
-                        outputs[0].as_ref().ok_or("Left missing")?.handle.as_ptr(),
+                        outputs.get(&1).ok_or("Left missing")?.handle.as_ptr(),
                     );
                 }
             }
             28 => {
-                check(!enabled[0], "Left close was not observed")?;
-                enabled[0] = true;
+                check(!enabled.contains(&1), "Left close was not observed")?;
+                enabled.insert(1);
             }
             29 => {
-                check(enabled[0], "Left reopen failed")?;
+                check(enabled.contains(&1), "Left reopen failed")?;
                 unsafe {
                     rastera_editor_close_output(
-                        outputs[1].as_ref().ok_or("Right missing")?.handle.as_ptr(),
+                        outputs.get(&2).ok_or("Right missing")?.handle.as_ptr(),
                     );
                 }
             }
             30 => {
-                check(!enabled[1], "Right close was not observed")?;
-                enabled[1] = true;
+                check(!enabled.contains(&2), "Right close was not observed")?;
+                enabled.insert(2);
             }
             31 => {
-                check(enabled[0] && enabled[1], "Right reopen failed")?;
+                check(
+                    enabled.contains(&1) && enabled.contains(&2),
+                    "Right reopen failed",
+                )?;
                 log(format!("editor_probe passed=1 import_png=1 add_text=1 native_drag_resize=1 single_gesture_undo_redo=1 reorder_duplicate_delete=1 project_roundtrip=1 failed_load_preserved=1 partially_off_canvas=1 native_output_close_reopen=1 result={}\n",self.folder.join("result.rastera.json").display()));
                 if !self.mapping {
                     return Ok(true);
@@ -287,7 +306,7 @@ impl Probe {
                 e.doc.viewports[1].fit_canvas(e.doc.canvas); // Deliberately overlap the selected Left.
                 e.history.record(before, &e.doc);
                 e.publish();
-                e.viewport_selected = Some(0);
+                e.viewport_selected = Some(1);
                 Self::event(p, 1, [960., 540.]);
             }
             35 => Self::event(p, 2, [800., 700.]),
@@ -324,7 +343,7 @@ impl Probe {
                     (e.doc.viewports[0].zoom - 2.).abs() < 0.002,
                     "Uniform viewport corner zoom failed",
                 )?;
-                let handle = e.rotation_handle(p, 0);
+                let handle = e.rotation_handle(p, 1);
                 self.handle = Some(handle);
                 Self::event(p, 1, handle);
             }
@@ -424,17 +443,17 @@ impl Probe {
                 )?;
                 unsafe {
                     rastera_editor_close_output(
-                        outputs[0].as_ref().ok_or("Detail missing")?.handle.as_ptr(),
+                        outputs.get(&1).ok_or("Detail missing")?.handle.as_ptr(),
                     );
                 }
             }
             51 => {
-                check(!enabled[0], "Mapped output close not observed")?;
-                enabled[0] = true;
+                check(!enabled.contains(&1), "Mapped output close not observed")?;
+                enabled.insert(1);
             }
             52 => {
                 check(
-                    enabled[0] && e.doc == *self.before.as_ref().unwrap(),
+                    enabled.contains(&1) && e.doc == *self.before.as_ref().unwrap(),
                     "Mapped output reopen lost settings",
                 )?;
                 let font = e.doc.texts[&3].font.clone().unwrap();
@@ -495,8 +514,8 @@ impl Probe {
                 e.error = None;
                 unsafe {
                     rastera_editor_close_output(
-                        outputs[1]
-                            .as_ref()
+                        outputs
+                            .get(&2)
                             .ok_or("Mapped Right missing")?
                             .handle
                             .as_ptr(),
@@ -504,16 +523,16 @@ impl Probe {
                 }
             }
             58 => {
-                check(!enabled[1], "Mapped Right close not observed")?;
-                enabled[1] = true;
+                check(!enabled.contains(&2), "Mapped Right close not observed")?;
+                enabled.insert(2);
             }
             59 => {
                 check(
-                    enabled[1] && e.doc == *self.before.as_ref().unwrap(),
+                    enabled.contains(&2) && e.doc == *self.before.as_ref().unwrap(),
                     "Mapped Right reopen lost settings",
                 )?;
                 e.change_mode(Mode::Viewports);
-                e.viewport_selected = Some(0);
+                e.viewport_selected = Some(1);
                 log(format!("canvas_mapping_probe passed=1 portrait_odd_resize=1 retained_coordinates=1 resize_undo_redo=1 viewport_native_pan_zoom_rotate=1 gesture_undo_redo=1 fit_canvas=1 installed_font_face=1 dialogs_native=1 mapping_font_roundtrip=1 mapped_output_reopen=1 missing_font_fallback=1 budget_rejection=1 cancel_preserved=1 failed_candidate_preserved=1 result={}\n",self.folder.join("mapping.rastera.json").display()));
                 if !self.selection {
                     return Ok(true);
@@ -529,7 +548,7 @@ impl Probe {
             }
             60 => {
                 e.history = History::default();
-                e.select_viewport(1);
+                e.select_viewport(2);
                 self.before = Some(e.doc.clone());
                 let (map, scale) = e.preview_mapping(p);
                 let world_per_point = e.doc.canvas[0] as f32 * scale / map.fit[2];
@@ -540,7 +559,7 @@ impl Probe {
             }
             61 => {
                 check(
-                    e.viewport_selected == Some(0),
+                    e.viewport_selected == Some(1),
                     "Enclosing Right stole Left label",
                 )?;
                 let q = self.handle.unwrap();
@@ -566,12 +585,12 @@ impl Probe {
                 let mut h = e.history.clone();
                 let mut d = e.doc.clone();
                 check(!h.undo(&mut d), "Selection/gesture created extra history")?;
-                e.select_viewport(1);
+                e.select_viewport(2);
                 Self::event(p, 1, [1880., 540.]);
             }
             65 => {
                 check(
-                    e.viewport_selected == Some(0),
+                    e.viewport_selected == Some(1),
                     "Enclosing Right stole Left outline",
                 )?;
                 Self::event(p, 2, [1780., 580.]);
@@ -590,12 +609,12 @@ impl Probe {
                     e.doc == *self.before.as_ref().unwrap(),
                     "Outline undo failed",
                 )?;
-                e.select_viewport(0);
+                e.select_viewport(1);
                 Self::event(p, 1, [120., 540.]);
             }
             69 => {
                 check(
-                    e.viewport_selected == Some(1),
+                    e.viewport_selected == Some(2),
                     "Right outline selection failed",
                 )?;
                 Self::event(p, 2, [220., 500.]);
@@ -614,7 +633,7 @@ impl Probe {
                     e.doc == *self.before.as_ref().unwrap(),
                     "Right drag undo failed",
                 )?;
-                e.select_viewport(0);
+                e.select_viewport(1);
                 Self::event(p, 1, [1400., 540.]);
             }
             73 => Self::modified_event(
@@ -642,7 +661,7 @@ impl Probe {
                 e.publish();
                 e.history = History::default();
                 self.before = Some(e.doc.clone());
-                e.select_viewport(0);
+                e.select_viewport(1);
                 Self::modified_event(
                     p,
                     1,
@@ -652,7 +671,7 @@ impl Probe {
             }
             77 => {
                 check(
-                    e.viewport_selected == Some(1) && e.view_gesture.is_none(),
+                    e.viewport_selected == Some(2) && e.view_gesture.is_none(),
                     "Option modifier/cycle did not reach Rust",
                 )?;
                 Self::modified_event(
@@ -680,7 +699,7 @@ impl Probe {
             }
             80 => {
                 check(
-                    e.viewport_selected == Some(0),
+                    e.viewport_selected == Some(1),
                     "Coincident cycle did not wrap",
                 )?;
                 Self::event(p, 3, [1400., 540.]);
