@@ -14,3 +14,4 @@ wgpu.workspace = true
 foreign-types = "=0.5.0"
 raw-window-handle = "=0.6.2"
 pollster = "=0.4.0"
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }

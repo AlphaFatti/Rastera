@@ -43,9 +43,11 @@ fn main() {
         "Metal",
         "Foundation",
         "CoreFoundation",
+        "UniformTypeIdentifiers",
     ] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
     println!("cargo:rustc-link-lib=dylib=c++");
     println!("cargo:rustc-link-arg-bin=shared-canvas-native=-mmacosx-version-min=14.0");
+    println!("cargo:rustc-link-arg-bin=canvas-editor=-mmacosx-version-min=14.0");
 }

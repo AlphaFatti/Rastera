@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "canvas": [
+    3840,
+    1080
+  ],
+  "next_id": 5,
+  "test_background": true,
+  "images": {
+    "1": {
+      "path": "alpha.png",
+      "width": 1200,
+      "height": 600
+    }
+  },
+  "texts": {
+    "3": {
+      "text": "Live Rastera text\nCrossing the output seam",
+      "font_size": 80.0,
+      "color": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "alignment": "Center"
+    }
+  },
+  "layers": [
+    {
+      "id": 4,
+      "name": "Seam text",
+      "rect": {
+        "x": 1676.92,
+        "y": 345.0,
+        "width": 1150.0687,
+        "height": 703.75
+      },
+      "visible": true,
+      "locked": false,
+      "opacity": 1.0,
+      "aspect_lock": false,
+      "content": {
+        "kind": "Text",
+        "source": 3
+      }
+    },
+    {
+      "id": 2,
+      "name": "rastera-editor-alpha.png",
+      "rect": {
+        "x": 1750.0002,
+        "y": 240.0,
+        "width": 1657.5,
+        "height": 828.75
+      },
+      "visible": true,
+      "locked": false,
+      "opacity": 1.0,
+      "aspect_lock": true,
+      "content": {
+        "kind": "Image",
+        "source": 1
+      }
+    }
+  ]
+}

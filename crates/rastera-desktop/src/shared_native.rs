@@ -1,3 +1,5 @@
+#[path = "editor.rs"]
+mod editor;
 use eframe::egui;
 use foreign_types::ForeignType;
 use rastera_core::{
@@ -143,6 +145,7 @@ struct App {
     origin: Instant,
     previous: Instant,
     callbacks: u64,
+    editor: Option<editor::Editor>,
 }
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
@@ -160,7 +163,45 @@ impl eframe::App for App {
             ));
         }
         ctx.request_repaint_after(Duration::from_secs_f64(1.0 / 60.0));
-        egui::TopBottomPanel::top("controls").exact_height(170.0).show(ctx,|ui| {
+        if let Some(editor) = &mut self.editor {
+            // Retire native-close handles before checkbox input; a reopen click in
+            // the first UI frame after close must create a fresh consumer.
+            for output in &mut self.outputs {
+                if output.as_ref().is_some_and(|o| !o.open()) {
+                    *output = None;
+                }
+            }
+            if let Some(preview) = &self.preview {
+                editor.pointers(preview, ctx);
+            }
+            let mut enabled =
+                std::array::from_fn(|i| self.outputs[i].as_ref().is_some_and(Consumer::open));
+            let area = editor.ui(ctx, &mut enabled);
+            if let Some(preview) = &self.preview {
+                editor.native_layout(preview, ctx, area);
+                editor.probe_tick(preview, &self.outputs, &mut enabled);
+            }
+            let pool = &self.producer.as_ref().unwrap().pool;
+            for (i, wanted) in enabled.into_iter().enumerate() {
+                // Native close can occur during a modal file panel inside ui().
+                // It wins over the pre-panel checkbox snapshot; do not auto-reopen.
+                if !wanted || self.outputs[i].as_ref().is_some_and(|c| !c.open()) {
+                    self.outputs[i] = None;
+                } else if self.outputs[i].is_none() {
+                    self.outputs[i] = None;
+                    match Consumer::new(
+                        pool,
+                        std::ptr::null_mut(),
+                        (i + 1) as i32,
+                        if i == 0 { Slice::LEFT } else { Slice::RIGHT },
+                    ) {
+                        Ok(c) => self.outputs[i] = Some(c),
+                        Err(e) => log(format!("shared_error open_output={i} message={e}\n")),
+                    }
+                }
+            }
+        } else {
+            egui::TopBottomPanel::top("controls").exact_height(170.0).show(ctx,|ui| {
             ui.heading("Operator / UI preview — shared canvas integration");
             ui.monospace(format!("UI elapsed {:.3}s · callback {} (UI may pause during native transitions)",self.origin.elapsed().as_secs_f64(),self.callbacks));
             ui.label("Preview below and clean outputs read completed frames from one core producer.");
@@ -178,7 +219,8 @@ impl eframe::App for App {
             }
             ui.label("Native canvas preview: full 3840 × 1080. Source dimensions never follow window size.");
         });
-        egui::CentralPanel::default().show(ctx, |_| {});
+            egui::CentralPanel::default().show(ctx, |_| {});
+        }
     }
 }
 impl Drop for App {
@@ -191,13 +233,22 @@ impl Drop for App {
         self.preview = None;
         let pool = self.producer.as_ref().unwrap().pool.clone();
         self.producer = None; // Join producer AFTER every native consumer has stopped.
+        self.editor = None; // Stop preparation/file workers after live rendering has stopped.
         log(format!(
             "shared_shutdown outstanding_slots={} capacity=4\n",
             pool.leased_slots()
         ));
     }
 }
+#[allow(dead_code)] // The two desktop binaries share this bridge and baseline runner.
 pub fn run() -> eframe::Result {
+    run_mode(false)
+}
+#[allow(dead_code)]
+pub fn run_editor() -> eframe::Result {
+    run_mode(true)
+}
+fn run_mode(editor_mode: bool) -> eframe::Result {
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::METAL,
         ..Default::default()
@@ -216,7 +267,12 @@ pub fn run() -> eframe::Result {
         None,
     ))
     .map_err(|e| eframe::Error::AppCreation(Box::new(e)))?;
-    let producer = SharedCanvasProducer::new(device, queue);
+    let editor = editor_mode.then(|| editor::Editor::new(device.clone(), queue.clone()));
+    let producer = if let Some(editor) = &editor {
+        SharedCanvasProducer::with_scene(device, queue, editor.engine.feed())
+    } else {
+        SharedCanvasProducer::new(device, queue)
+    };
     let start = Instant::now();
     while producer.pool.acquire().is_none() {
         if start.elapsed() > Duration::from_secs(5) {
@@ -226,11 +282,29 @@ pub fn run() -> eframe::Result {
         }
         thread::sleep(Duration::from_millis(5));
     }
+    let probing = std::env::args().any(|a| a.starts_with("--editor-probe="));
     let options = eframe::NativeOptions {
+        event_loop_builder: probing.then(|| {
+            Box::new(
+                |builder: &mut winit::event_loop::EventLoopBuilder<eframe::UserEvent>| {
+                    use winit::platform::macos::EventLoopBuilderExtMacOS;
+                    builder.with_activate_ignoring_other_apps(false);
+                },
+            ) as _
+        }),
         renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1000., 600.])
-            .with_min_inner_size([500., 300.]),
+            .with_active(!probing)
+            .with_inner_size(if editor_mode {
+                [1320., 760.]
+            } else {
+                [1000., 600.]
+            })
+            .with_min_inner_size(if editor_mode {
+                [900., 450.]
+            } else {
+                [500., 300.]
+            }),
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
             wgpu_setup: eframe::egui_wgpu::WgpuSetupCreateNew {
                 instance_descriptor: wgpu::InstanceDescriptor {
@@ -245,7 +319,13 @@ pub fn run() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "Rastera — Operator / UI preview",
+        if probing {
+            "Rastera — Canvas Editor — Operator / UI preview (automated probe)"
+        } else if editor_mode {
+            "Rastera — Canvas Editor — Operator / UI preview"
+        } else {
+            "Rastera — Operator / UI preview"
+        },
         options,
         Box::new(move |cc| {
             let host = match cc.window_handle()?.as_raw() {
@@ -295,6 +375,7 @@ pub fn run() -> eframe::Result {
                 origin,
                 previous: origin,
                 callbacks: 0,
+                editor,
             }))
         }),
     )

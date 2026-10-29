@@ -1,4 +1,4 @@
-# First canvas prototype
+# Rastera development status
 
 **Acceptance blocked: the native minimize/restore transition stall remains reproduced.**
 
@@ -6,7 +6,17 @@ This WIP checkpoint does not signify milestone acceptance. Individual native tra
 
 Status recorded October 28, 2026. This is an engineering prototype, not a production live-show application. The architecture blueprint remains the long-term direction.
 
-## Working scope
+## Current editor review work
+
+The WIP `feature/canvas-editor` review checkpoint builds on `9fbf7f81c2528ccf96143391adc0646bd9f6e976`. Run `cargo run --release --locked -p rastera-desktop --bin canvas-editor` on macOS 14+. It adds reusable image/text document objects, ordered layers, native preview selection/drag/corner resize, an inspector, editing/history, and versioned JSON projects with relative media references. File/image/text preparation is off the independent producer; complete scenes enter the existing four-texture, completion-leased native canvas path. Operator-only selection chrome never enters clean textures. Baseline executables are preserved.
+
+[The editor record](canvas-editor.md) distinguishes pure automated checks, programmatic native event replay, captured content and remaining human input/display checks. Fifteen Rust tests, nine existing Python analysis tests, formatting, locked compilation, Clippy with denied warnings and the workspace release build pass. New focused tests cover Retina/letterboxing mapping, hit order/visibility/locking, anchored and aspect-locked resize, independent text style, undo/redo/IDs, PNG/JPEG/alpha, project references/validation and text wrapping/alignment/clipping. Font notices are included. No first-canvas or production acceptance is claimed; the operator UI pause, capture-conditioned callback stalls and historical stricter all-window automation gap remain pending.
+
+Native review checks now include real PNG picker/text entry/inspector controls, image and text dragging/resizing across the seam, reorder, save/open panels and actual output checkboxes. The saved composition is open for human review. A final local-native-event replay additionally asserts whole-gesture history, negative positions, failed-load preservation and native output lifecycle. Corrected animated trials exercised three native minimize/restore cycles separately per operator/Left/Right, with captured and uncaptured runs. Clean marker captures change inside a 584.580 ms operator UI callback pause; 1:1 screenshot seam checks pass. GPU drains end with zero leases; no logged GPU errors or pool-full skips. Sparse captures, zero/missing presentation evidence, an earlier invalid static-motion trial and the unresolved operator/capture limitations are retained in the editor record/results. Human unobscured-display and physical-output acceptance remain pending.
+
+The sections below retain the original diagnostic baseline's scope and historical verification; they are not the current editor feature inventory.
+
+## Original diagnostic baseline: working scope
 
 - Rust workspace with UI-independent geometry/GPU generation, the desktop shell, and a separate native presentation control crate.
 - One fixed 3840 × 1080 offscreen GPU texture, generated via wgpu/Metal on a dedicated producer thread.
@@ -15,7 +25,7 @@ Status recorded October 28, 2026. This is an engineering prototype, not a produc
 - Shared texture, no CPU frame readback. Window resizing changes presentation only.
 - Approximately 60 Hz monotonic producer deadlines, a wait for the producer's specific submission to bound producer work, and missed-deadline skipping. Deferred output viewports receive independent, coalesced frame-ready notifications. View presentation remains event-loop driven. See README for queue/presentation limitations.
 
-## Verification record
+## Original diagnostic baseline: verification record
 
 Host: Apple M1 Pro, arm64, macOS 15.5; Apple Command Line Tools, without full Xcode. Rust 1.99.1 was installed in isolated `/tmp/rastera-cargo` and `/tmp/rastera-rustup` directories for this session. Those temporary directories are not a permanent developer setup; follow README for a normal installation.
 
@@ -43,9 +53,9 @@ Cargo reports a future Rust compatibility warning in transitive `block` 0.1.6 (a
 
 ## Next milestone and limitations
 
-Next: resolve and visually accept the minimize/restore regression before accepting the first-canvas milestone. Then verify geometry on two real displays, add presentation timing/late-frame instrumentation and a short endurance measurement, and add one image source while preserving this shared-canvas test. The separate libobs feasibility comparison in the blueprint has not been performed.
+Next: resolve and visually accept the minimize/restore regression before accepting the first-canvas milestone. Then verify geometry on two real displays, add presentation timing/late-frame instrumentation and a short endurance measurement, and complete human editor verification while preserving the diagnostic baseline. The separate libobs feasibility comparison in the blueprint has not been performed.
 
-There is no guaranteed cross-window frame identity at presentation time, genlock, rational media timeline, calibrated color pipeline, display assignment/fullscreen mode, save/load, editable routing, editor, capture, decoding, audio, NDI, DeckLink, or slides. Windows is not implemented or tested. Minimum supported macOS, installer/signing, source license, and performance limits remain undecided. No mock integrations are present.
+There is no guaranteed cross-window frame identity at presentation time, genlock, rational media timeline, calibrated color pipeline, display assignment/fullscreen mode, editable routing, capture, video decoding, audio, NDI, DeckLink or slides. The later editor adds image/text composition and save/load. Windows is not implemented or tested. Minimum supported macOS, installer/signing, source license, and performance limits remain undecided. No mock integrations are present.
 
 ## Minimize/restore regression investigation
 

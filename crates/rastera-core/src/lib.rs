@@ -95,3 +95,6 @@ mod tests {
         }
     }
 }
+
+pub mod composition;
+pub mod scene;

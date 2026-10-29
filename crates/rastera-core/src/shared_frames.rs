@@ -79,6 +79,20 @@ pub struct SharedCanvasProducer {
 }
 impl SharedCanvasProducer {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        Self::new_inner(device, queue, None)
+    }
+    pub fn with_scene(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        feed: crate::composition::SceneFeed,
+    ) -> Self {
+        Self::new_inner(device, queue, Some(feed))
+    }
+    fn new_inner(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        mut scene: Option<crate::composition::SceneFeed>,
+    ) -> Self {
         let pool = Arc::new(FramePool::new(
             (0..4).map(|_| canvas_texture(&device)).collect(),
         ));
@@ -102,8 +116,17 @@ impl SharedCanvasProducer {
                 previous = Some(begin);
                 if let Some((slot, texture)) = frames.reserve() {
                     let target = texture.create_view(&Default::default());
-                    let encoder =
-                        generator.encode(&device, &queue, &target, origin.elapsed().as_secs_f32());
+                    let encoder = if let Some(feed) = scene.as_mut() {
+                        feed.encode(
+                            &device,
+                            &queue,
+                            &target,
+                            origin.elapsed().as_secs_f32(),
+                            &generator,
+                        )
+                    } else {
+                        generator.encode(&device, &queue, &target, origin.elapsed().as_secs_f32())
+                    };
                     progress.timings.record(1, begin, Instant::now());
                     let start = Instant::now();
                     let command = encoder.finish();
@@ -116,6 +139,9 @@ impl SharedCanvasProducer {
                     let _ = device.poll(wgpu::Maintain::WaitForSubmissionIndex(submission));
                     progress.timings.record(4, start, Instant::now());
                     let frame = progress.completed.fetch_add(1, Ordering::Relaxed) + 1;
+                    if let Some(feed) = scene.as_ref() {
+                        feed.frame_completed();
+                    }
                     // The reservation remains leased until after publication. Native readers
                     // acquire under the same mutex, and only after producer GPU completion.
                     frames.publish(slot, frame);

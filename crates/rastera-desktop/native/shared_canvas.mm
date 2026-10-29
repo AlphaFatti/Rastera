@@ -1,6 +1,7 @@
 // Native consumers of completed rastera-core frames. AppKit stays on main.
 #import <AppKit/AppKit.h>
 #import <Metal/Metal.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <QuartzCore/QuartzCore.h>
 #include <atomic>
 #include <algorithm>
@@ -42,10 +43,48 @@ void report(const std::shared_ptr<Stats> &s) {
     std::fprintf(stderr,"shared_interval role=%s host_s=%.9f ticks=%llu submitted=%llu completed=%llu presented_callbacks=%llu zero=%llu errors=%llu lost=%llu busy=%llu inflight=%u max_inflight=%u\n",s->role,CACurrentMediaTime(),(unsigned long long)s->ticks.load(),(unsigned long long)s->submitted.load(),(unsigned long long)s->completed.load(),(unsigned long long)s->presented.load(),(unsigned long long)s->zero.load(),(unsigned long long)s->errors.load(),(unsigned long long)s->lost.load(),(unsigned long long)s->busy.load(),s->inflight.load(),s->maxInflight.load());
 }
 }
-@interface SharedCanvasView : NSView
+// Operator-only surface state. Never sampled by the canvas producer or clean windows.
+struct EditorPointer { uint32_t kind; float x,y,width,height,scale; };
+@interface EditorSelectionView : NSView {
+@public float selection[4]; uint32_t flags; CGSize pixels;
+}
+@end
+@implementation EditorSelectionView
+- (BOOL)isFlipped { return YES; }
+- (NSView *)hitTest:(NSPoint)point { return nil; }
+- (void)drawRect:(NSRect)dirty {
+    NSRectFillUsingOperation(dirty,NSCompositingOperationClear);
+    if(!flags || pixels.width<=0 || pixels.height<=0) return;
+    float fit[4]; rastera_shared_fit(3840,1080,float(pixels.width),float(pixels.height),fit);
+    const float sx=self.bounds.size.width/pixels.width, sy=self.bounds.size.height/pixels.height;
+    NSRect r=NSMakeRect((fit[0]+selection[0]/3840*fit[2])*sx,(fit[1]+selection[1]/1080*fit[3])*sy,selection[2]/3840*fit[2]*sx,selection[3]/1080*fit[3]*sy);
+    NSColor *stroke=(flags&2)?NSColor.grayColor:NSColor.cyanColor; [stroke setStroke];
+    NSBezierPath *outline=[NSBezierPath bezierPathWithRect:r]; outline.lineWidth=1.5; [outline stroke];
+    if(!(flags&2)) { [NSColor.whiteColor setFill];
+        for(int i=0;i<4;++i) { NSPoint p=NSMakePoint(i%2?NSMaxX(r):NSMinX(r),i/2?NSMaxY(r):NSMinY(r));
+            NSBezierPath *handle=[NSBezierPath bezierPathWithRect:NSMakeRect(p.x-4,p.y-4,8,8)]; [handle fill];[handle stroke]; }
+    }
+}
+@end
+@interface SharedCanvasView : NSView {
+@public BOOL editorEnabled; std::deque<EditorPointer> pointerEvents; EditorSelectionView *selectionView;
+}
 - (void)resizeDrawable;
 @end
 @implementation SharedCanvasView
+- (BOOL)acceptsFirstMouse:(NSEvent *)event { return editorEnabled?YES:[super acceptsFirstMouse:event]; }
+- (void)recordPointer:(NSEvent *)event kind:(uint32_t)kind {
+    NSPoint p=[self convertPoint:event.locationInWindow fromView:nil];
+    CGSize size=((CAMetalLayer *)self.layer).drawableSize;
+    float sx=self.bounds.size.width>0?size.width/self.bounds.size.width:1;
+    float sy=self.bounds.size.height>0?size.height/self.bounds.size.height:1;
+    EditorPointer value={kind,float(p.x*sx),float((self.bounds.size.height-p.y)*sy),float(size.width),float(size.height),sx};
+    if(kind==2&&!pointerEvents.empty()&&pointerEvents.back().kind==2) pointerEvents.back()=value;
+    else { if(pointerEvents.size()>=64) {pointerEvents.clear();pointerEvents.push_back({4,0,0,0,0,1});} pointerEvents.push_back(value); }
+}
+- (void)mouseDown:(NSEvent *)event { if(editorEnabled) { [self.window makeFirstResponder:self.superview]; [self recordPointer:event kind:1]; } else [super mouseDown:event]; }
+- (void)mouseDragged:(NSEvent *)event { if(editorEnabled) [self recordPointer:event kind:2]; else [super mouseDragged:event]; }
+- (void)mouseUp:(NSEvent *)event { if(editorEnabled) [self recordPointer:event kind:3]; else [super mouseUp:event]; }
 - (CALayer *)makeBackingLayer { return [CAMetalLayer layer]; }
 - (BOOL)wantsUpdateLayer { return YES; }
 - (void)resizeDrawable {
@@ -82,6 +121,10 @@ API_AVAILABLE(macos(14.0))
 - (BOOL)start:(void *)source host:(NSView *)host role:(int)role slice:(const uint32_t *)slice;
 - (void)stop;
 - (BOOL)isOpen;
+- (void)editorRect:(const float *)rect screen:(const float *)screen selection:(const float *)selected flags:(uint32_t)flags;
+- (BOOL)pollPointer:(EditorPointer *)out;
+- (void)replay:(uint32_t)kind x:(float)x y:(float)y;
+- (void)closeOutputForProbe;
 @end
 @implementation SharedCanvasConsumer
 - (BOOL)start:(void *)source host:(NSView *)host role:(int)role slice:(const uint32_t *)slice {
@@ -141,7 +184,10 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
     _layer.framebufferOnly=YES; _layer.maximumDrawableCount=3;
     _layer.presentsWithTransaction=NO; _layer.displaySyncEnabled=YES;
     _layer.allowsNextDrawableTimeout=YES;
-    if(!_embedded) [_window makeKeyAndOrderFront:nil];
+    if(!_embedded) {
+        BOOL replay=NO;for(NSString *arg in NSProcessInfo.processInfo.arguments)if([arg hasPrefix:@"--editor-probe="])replay=YES;
+        if(replay){_window.title=[_window.title stringByAppendingString:@" (automated probe)"];[_window orderFront:nil];}else [_window makeKeyAndOrderFront:nil];
+    }
     [_view resizeDrawable];
     { std::lock_guard<std::mutex> guard(registryMutex); registry.push_back(_stats); }
     std::fprintf(stderr,"shared_open role=%s x=%u y=%u width=%u height=%u animation_readback=%ld\n",_stats->role,_slice[0],_slice[1],_slice[2],_slice[3],(long)_window.animationBehavior);
@@ -211,6 +257,42 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
         [drawable present];
     }
 }
+- (void)editorRect:(const float *)rect screen:(const float *)screen selection:(const float *)selected flags:(uint32_t)flags {
+    NSCAssert(NSThread.isMainThread,@"Editor layout/overlay on main");
+    if(!_embedded||screen[0]<=0||screen[1]<=0) return;
+    NSView *host=_view.superview;
+    float sx=host.bounds.size.width/screen[0], sy=host.bounds.size.height/screen[1];
+    NSRect frame=NSMakeRect(rect[0]*sx,host.isFlipped?rect[1]*sy:host.bounds.size.height-(rect[1]+rect[3])*sy,rect[2]*sx,rect[3]*sy);
+    _view.autoresizingMask=NSViewNotSizable;
+    _view->editorEnabled=YES;
+    if(!NSEqualRects(frame,_view.frame)) _view.frame=frame;
+    if(!_view->selectionView) {
+        _view->selectionView=[[EditorSelectionView alloc] initWithFrame:_view.bounds];
+        _view->selectionView.wantsLayer=YES;
+        _view->selectionView.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
+        [_view addSubview:_view->selectionView];
+    }
+    EditorSelectionView *overlay=_view->selectionView;
+    const CGSize size=_layer.drawableSize;
+    if(overlay->flags!=flags || std::memcmp(overlay->selection,selected,4*sizeof(float)) || !CGSizeEqualToSize(overlay->pixels,size)) {
+        overlay->flags=flags;overlay->pixels=size;std::memcpy(overlay->selection,selected,4*sizeof(float));overlay.needsDisplay=YES;
+    }
+}
+- (void)closeOutputForProbe { NSCAssert(NSThread.isMainThread,@"Close on main");if(!_embedded)[_window performClose:nil]; }
+- (void)replay:(uint32_t)kind x:(float)x y:(float)y {
+    if(!_embedded||!_view->editorEnabled)return;
+    float fit[4];const CGSize size=_layer.drawableSize;rastera_shared_fit(3840,1080,size.width,size.height,fit);
+    NSPoint local=NSMakePoint((fit[0]+x/3840*fit[2])*_view.bounds.size.width/size.width,_view.bounds.size.height-(fit[1]+y/1080*fit[3])*_view.bounds.size.height/size.height);
+    NSPoint position=[_view convertPoint:local toView:nil];
+    NSEventType type=kind==1?NSEventTypeLeftMouseDown:kind==2?NSEventTypeLeftMouseDragged:NSEventTypeLeftMouseUp;
+    NSEvent *event=[NSEvent mouseEventWithType:type location:position modifierFlags:0 timestamp:CACurrentMediaTime() windowNumber:_window.windowNumber context:nil eventNumber:0 clickCount:1 pressure:0];
+    if(kind==1)[_view mouseDown:event];else if(kind==2)[_view mouseDragged:event];else [_view mouseUp:event];
+}
+- (BOOL)pollPointer:(EditorPointer *)out {
+    NSCAssert(NSThread.isMainThread,@"Editor input on main");
+    if(_view->pointerEvents.empty()) return NO;
+    *out=_view->pointerEvents.front();_view->pointerEvents.pop_front();return YES;
+}
 - (BOOL)isOpen { NSCAssert(NSThread.isMainThread,@"Main only"); return !_closed && !_stats->stop.load(); }
 - (void)stop {
     NSCAssert(NSThread.isMainThread,@"Main lifecycle");
@@ -247,3 +329,38 @@ extern "C" void rastera_shared_report() {
 extern "C" void rastera_shared_log(const char *line) { std::fputs(line,stderr); }
 
 extern "C" double rastera_shared_host_time() { return CACurrentMediaTime(); }
+
+extern "C" void rastera_editor_layout(void *handle,const float *rect,const float *screen,const float *selection,uint32_t flags) {
+    if(@available(macOS 14.0,*)) [(__bridge SharedCanvasConsumer *)handle editorRect:rect screen:screen selection:selection flags:flags];
+}
+extern "C" bool rastera_editor_pointer(void *handle,EditorPointer *out) {
+    if(@available(macOS 14.0,*)) return [(__bridge SharedCanvasConsumer *)handle pollPointer:out];
+    return false;
+}
+// Native panels are UI operations; all subsequent reading/decoding/writing is on a worker.
+extern "C" char *rastera_editor_dialog(int kind) {
+    NSCAssert(NSThread.isMainThread,@"Native file panels on main");
+    if(kind==2) {
+        NSSavePanel *panel=[NSSavePanel savePanel];panel.allowedContentTypes=@[UTTypeJSON];panel.nameFieldStringValue=@"Untitled.rastera.json";
+        if([panel runModal]!=NSModalResponseOK) return nullptr;
+        return strdup(panel.URL.path.UTF8String);
+    }
+    NSOpenPanel *panel=[NSOpenPanel openPanel];panel.canChooseDirectories=NO;panel.allowsMultipleSelection=NO;
+    panel.allowedContentTypes=kind==0?@[UTTypePNG,UTTypeJPEG]:@[UTTypeJSON];
+    if([panel runModal]!=NSModalResponseOK) return nullptr;
+    return strdup(panel.URL.path.UTF8String);
+}
+extern "C" void rastera_editor_free_string(char *value) { free(value); }
+// Opt-in diagnostic replay only: dispatch native view events on main without
+// activating the app, posting system input or touching the user's cursor.
+extern "C" void rastera_editor_replay(void *handle,uint32_t kind,float x,float y) {
+    NSCAssert(NSThread.isMainThread,@"Replay on main");
+    if(@available(macOS 14.0,*)) {
+        SharedCanvasConsumer *consumer=(__bridge SharedCanvasConsumer *)handle;
+        [consumer replay:kind x:x y:y];
+    }
+}
+
+extern "C" void rastera_editor_close_output(void *handle) {
+    if(@available(macOS 14.0,*)) [(__bridge SharedCanvasConsumer *)handle closeOutputForProbe];
+}
