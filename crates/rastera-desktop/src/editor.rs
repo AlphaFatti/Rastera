@@ -29,7 +29,9 @@ struct Pointer {
     width: f32,
     height: f32,
     scale: f32,
+    modifiers: u64,
 }
+const _: [(); 32] = [(); std::mem::size_of::<Pointer>()];
 unsafe extern "C" {
     fn rastera_editor_pointer(handle: *mut std::ffi::c_void, out: *mut Pointer) -> bool;
     fn rastera_editor_layout(

@@ -6,6 +6,12 @@ This WIP checkpoint does not signify milestone acceptance. Individual native tra
 
 Status recorded October 29, 2026. This is an engineering prototype, not a production live-show application. The architecture blueprint remains the long-term direction.
 
+## Focused viewport-selection correction
+
+`fix/viewport-selection` builds on `d4ce7f7d5ffe6b4e58424d7a0ffe196370712456`. Names/outlines now select nested viewports ahead of another viewport's selected body; selected handles retain priority. Outline tolerance uses screen points. Option-click cycles stable viewport IDs without dragging or adding history; ordinary drags latch their chosen viewport. Native flags cross the updated pointer/replay bridge. Workspace is now `#17151A`, shared across panels/dialogs, preview margins and label backgrounds; accents/content colors are unchanged.
+
+Twenty-eight Rust tests, nine Python tests, required formatting/check/Clippy and the release build pass. On this Mac, local native NSEvent replay reproduced Right surrounding Left and asserted both could move independently, undo, sidebar-selected dragging, coincident Option selection/no history, and existing resize/rotation behavior. This is programmatic native verification, not human mouse/keyboard acceptance or physical presentation verification. See [the correction record](viewport-selection-fix.md). Existing operator-pause/capture limitations and pending milestone acceptance remain.
+
 ## Current canvas-mapping review work
 
 The WIP `feature/canvas-mapping` remote-review checkpoint builds on editor checkpoint `7be441ed18e5bf97aa73fbda5052477bfc6407e9`. Run `cargo run --release --locked -p rastera-desktop --bin canvas-editor`. Settings adds undoable, transactional canvas dimensions; Canvas / Viewports modes add pan/zoom/rotation, persistent output names/colors and separate selections; installed font families/faces affect actual core text preparation. Version-1 projects migrate explicitly to schema 2. Central Rastera tokens and a neutral, always-visible operator-only canvas boundary are implemented. Logical outputs stay 1920 × 1080; default halves remain exact. Diagnostic baselines are preserved.

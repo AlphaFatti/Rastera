@@ -2,7 +2,13 @@
 use super::*;
 unsafe extern "C" {
     fn rastera_editor_close_output(handle: *mut std::ffi::c_void);
-    fn rastera_editor_replay(handle: *mut std::ffi::c_void, kind: u32, x: f32, y: f32);
+    fn rastera_editor_replay(
+        handle: *mut std::ffi::c_void,
+        kind: u32,
+        x: f32,
+        y: f32,
+        modifiers: u64,
+    );
 }
 pub(super) struct Probe {
     folder: PathBuf,
@@ -11,6 +17,7 @@ pub(super) struct Probe {
     before: Option<Document>,
     handle: Option<[f32; 2]>,
     mapping: bool,
+    selection: bool,
 }
 impl Probe {
     pub fn new(folder: PathBuf) -> Self {
@@ -21,12 +28,16 @@ impl Probe {
             before: None,
             handle: None,
             mapping: std::env::args().any(|a| a == "--mapping-probe"),
+            selection: std::env::args().any(|a| a == "--selection-probe"),
         }
     }
     fn event(preview: &Consumer, kind: u32, p: [f32; 2]) {
+        Self::modified_event(preview, kind, p, 0);
+    }
+    fn modified_event(preview: &Consumer, kind: u32, p: [f32; 2], modifiers: u64) {
         // SAFETY: main-thread live preview; native replay dispatches only to its own view.
         unsafe {
-            rastera_editor_replay(preview.handle.as_ptr(), kind, p[0], p[1]);
+            rastera_editor_replay(preview.handle.as_ptr(), kind, p[0], p[1], modifiers);
         }
     }
     pub fn tick(
@@ -504,6 +515,202 @@ impl Probe {
                 e.change_mode(Mode::Viewports);
                 e.viewport_selected = Some(0);
                 log(format!("canvas_mapping_probe passed=1 portrait_odd_resize=1 retained_coordinates=1 resize_undo_redo=1 viewport_native_pan_zoom_rotate=1 gesture_undo_redo=1 fit_canvas=1 installed_font_face=1 dialogs_native=1 mapping_font_roundtrip=1 mapped_output_reopen=1 missing_font_fallback=1 budget_rejection=1 cancel_preserved=1 failed_candidate_preserved=1 result={}\n",self.folder.join("mapping.rastera.json").display()));
+                if !self.selection {
+                    return Ok(true);
+                }
+                let mut candidate = e.doc.clone();
+                candidate.canvas = [3840, 1080];
+                candidate.viewports = rastera_core::mapping::defaults();
+                candidate.viewports[0].center = [1400., 540.];
+                candidate.viewports[0].zoom = 2.;
+                candidate.viewports[1].center = [1400., 540.];
+                candidate.viewports[1].zoom = 0.75;
+                e.stage_document(candidate, None);
+            }
+            60 => {
+                e.history = History::default();
+                e.select_viewport(1);
+                self.before = Some(e.doc.clone());
+                let (map, scale) = e.preview_mapping(p);
+                let world_per_point = e.doc.canvas[0] as f32 * scale / map.fit[2];
+                let q = e.doc.viewports[0].corners()[0];
+                let label = [q[0] + 12. * world_per_point, q[1] + 12. * world_per_point];
+                self.handle = Some(label);
+                Self::event(p, 1, label);
+            }
+            61 => {
+                check(
+                    e.viewport_selected == Some(0),
+                    "Enclosing Right stole Left label",
+                )?;
+                let q = self.handle.unwrap();
+                Self::event(p, 2, [q[0] + 200., q[1] + 50.]);
+            }
+            62 => {
+                let q = self.handle.unwrap();
+                Self::event(p, 3, [q[0] + 200., q[1] + 50.]);
+            }
+            63 => {
+                check(
+                    (e.doc.viewports[0].center[0] - 1600.).abs() < 0.2
+                        && e.doc.viewports[1] == self.before.as_ref().unwrap().viewports[1],
+                    "Label drag changed wrong viewport",
+                )?;
+                e.action(Action::Undo);
+            }
+            64 => {
+                check(
+                    e.doc == *self.before.as_ref().unwrap(),
+                    "Label drag undo failed",
+                )?;
+                let mut h = e.history.clone();
+                let mut d = e.doc.clone();
+                check(!h.undo(&mut d), "Selection/gesture created extra history")?;
+                e.select_viewport(1);
+                Self::event(p, 1, [1880., 540.]);
+            }
+            65 => {
+                check(
+                    e.viewport_selected == Some(0),
+                    "Enclosing Right stole Left outline",
+                )?;
+                Self::event(p, 2, [1780., 580.]);
+            }
+            66 => Self::event(p, 3, [1780., 580.]),
+            67 => {
+                check(
+                    (e.doc.viewports[0].center[0] - 1300.).abs() < 0.2
+                        && e.doc.viewports[1] == self.before.as_ref().unwrap().viewports[1],
+                    "Outline drag changed wrong viewport",
+                )?;
+                e.action(Action::Undo);
+            }
+            68 => {
+                check(
+                    e.doc == *self.before.as_ref().unwrap(),
+                    "Outline undo failed",
+                )?;
+                e.select_viewport(0);
+                Self::event(p, 1, [120., 540.]);
+            }
+            69 => {
+                check(
+                    e.viewport_selected == Some(1),
+                    "Right outline selection failed",
+                )?;
+                Self::event(p, 2, [220., 500.]);
+            }
+            70 => Self::event(p, 3, [220., 500.]),
+            71 => {
+                check(
+                    (e.doc.viewports[1].center[0] - 1500.).abs() < 0.2
+                        && e.doc.viewports[0] == self.before.as_ref().unwrap().viewports[0],
+                    "Right drag moved Left",
+                )?;
+                e.action(Action::Undo);
+            }
+            72 => {
+                check(
+                    e.doc == *self.before.as_ref().unwrap(),
+                    "Right drag undo failed",
+                )?;
+                e.select_viewport(0);
+                Self::event(p, 1, [1400., 540.]);
+            }
+            73 => Self::modified_event(
+                p,
+                2,
+                [2200., 600.],
+                rastera_core::viewport_hit::OPTION_MODIFIER,
+            ),
+            74 => Self::event(p, 3, [2200., 600.]),
+            75 => {
+                check(
+                    (e.doc.viewports[0].center[0] - 2200.).abs() < 0.2
+                        && e.doc.viewports[1] == self.before.as_ref().unwrap().viewports[1],
+                    "Sidebar drag did not latch chosen viewport",
+                )?;
+                e.action(Action::Undo);
+            }
+            76 => {
+                check(
+                    e.doc == *self.before.as_ref().unwrap(),
+                    "Sidebar drag undo failed",
+                )?;
+                e.doc.viewports[1].center = e.doc.viewports[0].center;
+                e.doc.viewports[1].zoom = e.doc.viewports[0].zoom;
+                e.publish();
+                e.history = History::default();
+                self.before = Some(e.doc.clone());
+                e.select_viewport(0);
+                Self::modified_event(
+                    p,
+                    1,
+                    [1400., 540.],
+                    rastera_core::viewport_hit::OPTION_MODIFIER,
+                );
+            }
+            77 => {
+                check(
+                    e.viewport_selected == Some(1) && e.view_gesture.is_none(),
+                    "Option modifier/cycle did not reach Rust",
+                )?;
+                Self::modified_event(
+                    p,
+                    2,
+                    [1600., 600.],
+                    rastera_core::viewport_hit::OPTION_MODIFIER,
+                );
+            }
+            78 => Self::event(p, 3, [1600., 600.]),
+            79 => {
+                check(
+                    e.doc == *self.before.as_ref().unwrap(),
+                    "Option-click unexpectedly dragged",
+                )?;
+                let mut h = e.history.clone();
+                let mut d = e.doc.clone();
+                check(!h.undo(&mut d), "Selection alone added history")?;
+                Self::modified_event(
+                    p,
+                    1,
+                    [1400., 540.],
+                    rastera_core::viewport_hit::OPTION_MODIFIER,
+                );
+            }
+            80 => {
+                check(
+                    e.viewport_selected == Some(0),
+                    "Coincident cycle did not wrap",
+                )?;
+                Self::event(p, 3, [1400., 540.]);
+            }
+            81 => Self::event(p, 1, [1400., 540.]),
+            82 => Self::event(p, 2, [1440., 570.]),
+            83 => Self::event(p, 3, [1440., 570.]),
+            84 => {
+                check(
+                    (e.doc.viewports[0].center[0] - 1440.).abs() < 0.2
+                        && e.doc.viewports[1] == self.before.as_ref().unwrap().viewports[1],
+                    "Ordinary drag lost Option-selected viewport",
+                )?;
+                e.action(Action::Undo);
+            }
+            85 => {
+                check(
+                    e.doc == *self.before.as_ref().unwrap(),
+                    "Coincident drag undo failed",
+                )?;
+                e.doc.viewports[1].zoom = 0.75;
+                e.publish();
+                e.history = History::default();
+                e.file_job(FileJob::Save(
+                    self.folder.join("selection.rastera.json"),
+                    Box::new(e.doc.clone()),
+                ));
+            }
+            86 => {
+                log("viewport_selection_probe passed=1 nested_label=1 nested_outline=1 move_both_independently=1 sidebar_drag_latched=1 option_native_modifiers=1 coincident_cycle=1 selection_no_history=1 single_gesture_undo=1 baseline_resize_rotation=1\n".into());
                 return Ok(true);
             }
             _ => return Err("Unknown probe phase".into()),

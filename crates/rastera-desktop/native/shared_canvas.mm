@@ -49,7 +49,9 @@ void report(const std::shared_ptr<Stats> &s) {
 }
 }
 // Operator-only surface state. Never sampled by the canvas producer or clean windows.
-struct EditorPointer { uint32_t kind; float x,y,width,height,scale; };
+struct EditorPointer { uint32_t kind; float x,y,width,height,scale; uint64_t modifiers; };
+static_assert(sizeof(EditorPointer)==32,"Pointer ABI must match Rust");
+static NSFont *EditorLabelFont(){return [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];}
 struct OverlayLine {float x1,y1,x2,y2,r,g,b,a,width;uint32_t kind;};
 struct OverlayLabel {float x,y;const char *text;float color[4];};
 @interface EditorSelectionView : NSView {
@@ -73,7 +75,7 @@ struct OverlayLabel {float x,y;const char *text;float color[4];};
         path.lineWidth=l.width;[path stroke];
     }
     float bg[4];rastera_theme_workspace(bg);
-    for(NSDictionary *label in labels){NSPoint p=point([label[@"x"] floatValue],[label[@"y"] floatValue]);[label[@"text"] drawAtPoint:NSMakePoint(p.x+6,p.y+6) withAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightSemibold],NSForegroundColorAttributeName:label[@"color"],NSBackgroundColorAttributeName:[NSColor colorWithSRGBRed:bg[0] green:bg[1] blue:bg[2] alpha:0.9]}];}
+    for(NSDictionary *label in labels){NSPoint p=point([label[@"x"] floatValue],[label[@"y"] floatValue]);[label[@"text"] drawAtPoint:NSMakePoint(p.x+6,p.y+6) withAttributes:@{NSFontAttributeName:EditorLabelFont(),NSForegroundColorAttributeName:label[@"color"],NSBackgroundColorAttributeName:[NSColor colorWithSRGBRed:bg[0] green:bg[1] blue:bg[2] alpha:0.9]}];}
     [NSGraphicsContext restoreGraphicsState];
 }
 @end
@@ -89,9 +91,9 @@ struct OverlayLabel {float x,y;const char *text;float color[4];};
     CGSize size=((CAMetalLayer *)self.layer).drawableSize;
     float sx=self.bounds.size.width>0?size.width/self.bounds.size.width:1;
     float sy=self.bounds.size.height>0?size.height/self.bounds.size.height:1;
-    EditorPointer value={kind,float(p.x*sx),float((self.bounds.size.height-p.y)*sy),float(size.width),float(size.height),sx};
+    EditorPointer value={kind,float(p.x*sx),float((self.bounds.size.height-p.y)*sy),float(size.width),float(size.height),sx,uint64_t(event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask)};
     if(kind==2&&!pointerEvents.empty()&&pointerEvents.back().kind==2) pointerEvents.back()=value;
-    else { if(pointerEvents.size()>=64) {pointerEvents.clear();pointerEvents.push_back({4,0,0,0,0,1});} pointerEvents.push_back(value); }
+    else { if(pointerEvents.size()>=64) {pointerEvents.clear();pointerEvents.push_back({4,0,0,0,0,1,0});} pointerEvents.push_back(value); }
 }
 - (void)mouseDown:(NSEvent *)event { if(editorEnabled) { [self.window makeFirstResponder:self.superview]; [self recordPointer:event kind:1]; } else [super mouseDown:event]; }
 - (void)mouseDragged:(NSEvent *)event { if(editorEnabled) [self recordPointer:event kind:2]; else [super mouseDragged:event]; }
@@ -137,7 +139,7 @@ API_AVAILABLE(macos(14.0))
 - (BOOL)isOpen;
 - (void)editorRect:(const float *)rect screen:(const float *)screen selection:(const float *)selected flags:(uint32_t)flags;
 - (BOOL)pollPointer:(EditorPointer *)out;
-- (void)replay:(uint32_t)kind x:(float)x y:(float)y;
+- (void)replay:(uint32_t)kind x:(float)x y:(float)y modifiers:(uint64_t)modifiers;
 - (void)closeOutputForProbe;
 - (void)overlay:(const uint32_t *)canvas lines:(const OverlayLine *)lines count:(uint32_t)count labels:(const OverlayLabel *)labels labelCount:(uint32_t)labelCount;
 - (int)settingsMenu;
@@ -325,13 +327,13 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
 }
 - (void)canvasSettingsChosen:(id)sender {objc_setAssociatedObject(self,@selector(settingsMenu),@1,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
 - (void)closeOutputForProbe { NSCAssert(NSThread.isMainThread,@"Close on main");if(!_embedded)[_window performClose:nil]; }
-- (void)replay:(uint32_t)kind x:(float)x y:(float)y {
+- (void)replay:(uint32_t)kind x:(float)x y:(float)y modifiers:(uint64_t)modifiers {
     if(!_embedded||!_view->editorEnabled)return;
     float fit[4];const CGSize size=_layer.drawableSize;uint32_t *canvas=_view->selectionView->canvas;rastera_editor_fit(canvas[0],canvas[1],size.width,size.height,_margin.load(),fit);
     NSPoint local=NSMakePoint((fit[0]+x/canvas[0]*fit[2])*_view.bounds.size.width/size.width,_view.bounds.size.height-(fit[1]+y/canvas[1]*fit[3])*_view.bounds.size.height/size.height);
     NSPoint position=[_view convertPoint:local toView:nil];
     NSEventType type=kind==1?NSEventTypeLeftMouseDown:kind==2?NSEventTypeLeftMouseDragged:NSEventTypeLeftMouseUp;
-    NSEvent *event=[NSEvent mouseEventWithType:type location:position modifierFlags:0 timestamp:CACurrentMediaTime() windowNumber:_window.windowNumber context:nil eventNumber:0 clickCount:1 pressure:0];
+    NSEvent *event=[NSEvent mouseEventWithType:type location:position modifierFlags:(NSEventModifierFlags)modifiers timestamp:CACurrentMediaTime() windowNumber:_window.windowNumber context:nil eventNumber:0 clickCount:1 pressure:0];
     if(kind==1)[_view mouseDown:event];else if(kind==2)[_view mouseDragged:event];else [_view mouseUp:event];
 }
 - (BOOL)pollPointer:(EditorPointer *)out {
@@ -399,11 +401,11 @@ extern "C" char *rastera_editor_dialog(int kind) {
 extern "C" void rastera_editor_free_string(char *value) { free(value); }
 // Opt-in diagnostic replay only: dispatch native view events on main without
 // activating the app, posting system input or touching the user's cursor.
-extern "C" void rastera_editor_replay(void *handle,uint32_t kind,float x,float y) {
+extern "C" void rastera_editor_replay(void *handle,uint32_t kind,float x,float y,uint64_t modifiers) {
     NSCAssert(NSThread.isMainThread,@"Replay on main");
     if(@available(macOS 14.0,*)) {
         SharedCanvasConsumer *consumer=(__bridge SharedCanvasConsumer *)handle;
-        [consumer replay:kind x:x y:y];
+        [consumer replay:kind x:x y:y modifiers:modifiers];
     }
 }
 
@@ -436,3 +438,8 @@ extern "C" int rastera_settings_menu(void *handle){
 
 extern "C" void rastera_editor_metrics(void *handle,float *out){NSCAssert(NSThread.isMainThread,@"Metrics on main");if(@available(macOS 14.0,*)){[(__bridge SharedCanvasConsumer *)handle metrics:out];}}
 extern "C" void rastera_shared_title(void *handle,const char *name){NSCAssert(NSThread.isMainThread,@"Titles on main");if(@available(macOS 14.0,*)){[(__bridge SharedCanvasConsumer *)handle outputTitle:@(name)];}}
+
+extern "C" void rastera_editor_label_size(const char *text,float *out){
+    NSCAssert(NSThread.isMainThread,@"Label measurement on main");
+    NSSize size=[@(text) sizeWithAttributes:@{NSFontAttributeName:EditorLabelFont()}];out[0]=size.width;out[1]=size.height;
+}

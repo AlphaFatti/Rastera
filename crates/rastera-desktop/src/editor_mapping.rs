@@ -43,6 +43,7 @@ unsafe extern "C" {
         label_count: u32,
     );
     fn rastera_editor_metrics(handle: *mut std::ffi::c_void, out: *mut f32);
+    fn rastera_editor_label_size(text: *const c_char, out: *mut f32);
     fn rastera_font_catalog() -> *mut c_char;
     fn rastera_settings_menu(handle: *mut std::ffi::c_void) -> i32;
 }
@@ -109,13 +110,42 @@ impl Editor {
         }
     }
     fn rotation_point(&self, index: usize, map: PreviewMap, scale: f32) -> [f32; 2] {
-        let v = &self.doc.viewports[index];
-        let top = v.canvas_point([960., 0.]);
-        let dx = top[0] - v.center[0];
-        let dy = top[1] - v.center[1];
-        let len = dx.hypot(dy);
-        let offset = 24. * scale * self.doc.canvas[0] as f32 / map.fit[2];
-        [top[0] + dx / len * offset, top[1] + dy / len * offset]
+        let f = rastera_core::viewport_hit::Footprint::new(
+            &self.doc.viewports[index],
+            map,
+            scale,
+            [0.; 2],
+        );
+        map.canvas(f.rotation.map(|x| x * scale), true)
+            .unwrap_or(self.doc.viewports[index].canvas_point([960., 0.]))
+    }
+    fn label_sizes(&self) -> [[f32; 2]; 2] {
+        self.doc.viewports.each_ref().map(|v| {
+            let name = CString::new(v.name.replace('\0', "")).unwrap();
+            let mut size = [0.; 2];
+            // SAFETY: main-thread native font measurement writes exactly two floats.
+            unsafe {
+                rastera_editor_label_size(name.as_ptr(), size.as_mut_ptr());
+            }
+            size
+        })
+    }
+
+    pub(super) fn preview_mapping(&self, preview: &Consumer) -> (PreviewMap, f32) {
+        let mut metrics = [0.; 3];
+        // SAFETY: main-thread query writes three floats for a live preview.
+        unsafe {
+            rastera_editor_metrics(preview.handle.as_ptr(), metrics.as_mut_ptr());
+        }
+        (
+            PreviewMap::for_canvas(self.doc.canvas, [metrics[0], metrics[1]], 20. * metrics[2]),
+            metrics[2],
+        )
+    }
+    pub(super) fn select_viewport(&mut self, index: usize) {
+        self.finish_view_gesture();
+        self.finish_inspector();
+        self.viewport_selected = Some(index);
     }
     pub(super) fn rotation_handle(&self, preview: &Consumer, index: usize) -> [f32; 2] {
         let mut metrics = [0.; 3];
@@ -128,40 +158,29 @@ impl Editor {
         self.rotation_point(index, map, metrics[2])
     }
     pub(super) fn view_pointer(&mut self, event: &Pointer, map: PreviewMap, p: [f32; 2]) {
-        let tolerance = 9. * event.scale * self.doc.canvas[0] as f32 / map.fit[2];
         match event.kind {
             1 => {
                 self.finish_view_gesture();
                 self.finish_inspector();
-                let mut picked = None;
-                if let Some(i) = self.viewport_selected {
-                    let v = &self.doc.viewports[i];
-                    let rotation = self.rotation_point(i, map, event.scale);
-                    if (p[0] - rotation[0]).hypot(p[1] - rotation[1]) <= tolerance {
-                        picked = Some((i, 2));
-                    } else if v
-                        .corners()
-                        .iter()
-                        .any(|q| (q[0] - p[0]).hypot(q[1] - p[1]) <= tolerance)
-                    {
-                        picked = Some((i, 1));
-                    }
-                }
-                if picked.is_none() {
-                    // Keep a list-selected viewport draggable where footprints overlap.
-                    picked = self
-                        .viewport_selected
-                        .filter(|&i| self.doc.viewports[i].contains(p))
-                        .map(|i| (i, 0));
-                }
-                if picked.is_none() {
-                    picked = (0..2)
-                        .rev()
-                        .find(|&i| self.doc.viewports[i].contains(p))
-                        .map(|i| (i, 0));
-                }
-                self.viewport_selected = picked.map(|v| v.0);
-                if let Some((i, kind)) = picked {
+                use rastera_core::viewport_hit::{self, HitKind};
+                let picked = viewport_hit::pick(
+                    &self.doc.viewports,
+                    map,
+                    event.scale,
+                    &self.label_sizes(),
+                    self.viewport_selected,
+                    [event.x, event.y],
+                    event.modifiers & viewport_hit::OPTION_MODIFIER != 0,
+                );
+                self.viewport_selected = picked.map(|hit| hit.index);
+                if let Some(hit) = picked.filter(|h| h.kind != HitKind::Cycle) {
+                    let i = hit.index;
+                    let kind = match hit.kind {
+                        HitKind::Pan => 0,
+                        HitKind::Resize => 1,
+                        HitKind::Rotate => 2,
+                        HitKind::Cycle => unreachable!(),
+                    };
                     self.view_gesture = Some(ViewGesture {
                         before: self.doc.clone(),
                         index: i,
@@ -332,12 +351,11 @@ impl Editor {
                             .selectable_label(self.viewport_selected == Some(i), &v.name)
                             .clicked()
                         {
-                            self.finish_view_gesture();
-                            self.finish_inspector();
-                            self.viewport_selected = Some(i);
+                            self.select_viewport(i);
                         }
                     });
                 }
+                ui.label("Drag a name or outline to select and move. Option-click cycles overlaps; then drag normally.");
                 ui.label("Footprints sample the canvas. Outside is black.");
             });
         let before = self.doc.clone();

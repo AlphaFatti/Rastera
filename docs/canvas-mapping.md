@@ -15,13 +15,17 @@ The review session is open with `/tmp/rastera-mapping-ui.rastera.json`, saved th
 
 **Live Edit — changes affect outputs.** Save before opening another project or quitting; there is still no unsaved-close prompt or recovery file.
 
+See [the focused overlap-selection correction and verification](viewport-selection-fix.md) for the changes following checkpoint `d4ce7f7`. Earlier trial data below is retained.
+
 ## Editor controls
 
 - **Settings → Canvas settings:** presets or numeric width/height, Apply/Cancel. Layers retain their positions and sizes in canvas pixels. Viewport centers, zoom and rotation retain their coordinates. Content outside the new canvas clips. Apply prepares a candidate while the old composition continues; the editor commits after a completed frame is published. Undo/redo includes canvas changes.
 - **Canvas / Viewports:** segmented toolbar modes with separate object/viewport selections. Switching finishes pending gestures/inspector edits. Object duplicate/delete shortcuts apply only in Canvas mode and surrender to text fields. Viewport gestures each record one completed history entry.
-- **Viewports:** select a labelled footprint or list row, drag to pan (the selected footprint takes priority where footprints overlap), drag a corner toward/away from its center for uniform zoom, or drag the round rotation handle. The arrow marks the top of the sampling frame. The inspector edits name, RGBA identity color, center X/Y, zoom and clockwise rotation. Names/colors also appear in the toolbar/list/inspector; native window titles follow names. IDs remain document data.
+- **Viewports:** select a labelled footprint or list row, drag a visible name or outline to select/pan it even inside another selected footprint; otherwise the selected body takes priority. Option-click cycles overlapping viewports in stable ID order without dragging; release Option, then drag the chosen body. Drag a corner toward/away from its center for uniform zoom, or drag the round rotation handle. The arrow marks the top of the sampling frame. The inspector edits name, RGBA identity color, center X/Y, zoom and clockwise rotation. Names/colors also appear in the toolbar/list/inspector; native window titles follow names. IDs remain document data.
 - **Fit Canvas:** centers on the current canvas, sets rotation to zero and chooses the uniform zoom that contains the whole canvas, leaving black where necessary. **Reset:** restores the original half's center `(960,540)` or `(2880,540)`, zoom 1 and rotation 0, retaining ID/name/color even on a custom canvas.
 - **Fonts:** select an editable text layer, choose **Choose font family / face…**, search family or style, then choose a face. The separate native dialog lists installed faces alongside bundled defaults. Requested family/style/PostScript identity persists; missing/unusable faces retain that reference and display a bundled-fallback warning in the inspector.
+
+The current workspace/panel/dialog/preview-margin token is **`#17151A`** (`[0x17, 0x15, 0x1A, 255]`); accents and project content colors are unchanged.
 
 The always-visible boundary is light neutral `#DAD5DE`, 1 screen point, with 20 screen points of workspace margin. Object handles, labels, viewport footprints and orientation indicators belong to the AppKit operator overlay. They never enter the shared texture. Preview layers clip to their layout bounds, including objects extending into workspace margins. Root UI and the native overlay use centralized Rastera palette tokens; project content colors remain independent.
 

@@ -1,0 +1,46 @@
+{
+  "version": 2,
+  "canvas": [
+    3840,
+    1080
+  ],
+  "viewports": [
+    {
+      "id": 1,
+      "name": "Left",
+      "color": [
+        38,
+        208,
+        133,
+        255
+      ],
+      "center": [
+        1400.0,
+        540.0
+      ],
+      "zoom": 2.0,
+      "rotation": 0.0
+    },
+    {
+      "id": 2,
+      "name": "Right",
+      "color": [
+        255,
+        254,
+        0,
+        255
+      ],
+      "center": [
+        1400.0,
+        540.0
+      ],
+      "zoom": 0.75,
+      "rotation": 0.0
+    }
+  ],
+  "next_id": 1,
+  "test_background": true,
+  "images": {},
+  "texts": {},
+  "layers": []
+}

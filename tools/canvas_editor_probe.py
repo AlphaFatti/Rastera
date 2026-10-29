@@ -41,10 +41,12 @@ def main():
     parser.add_argument('--cycles', type=int, default=3)
     parser.add_argument('--foreground', action='store_true', help='Explicitly activate this test app for an unobscured trial, restoring prior app focus afterward')
     parser.add_argument('--clean-only', action='store_true', help='Capture only clean outputs, avoiding the known operator-capture disturbance')
+    parser.add_argument('--selection', action='store_true', help='Also replay nested viewport selection, modifier cycling and gesture/history regressions')
     parser.add_argument('--mapping', action='store_true', help='Extend replay with dynamic canvas, viewport gestures, font and transactional failure checks')
     parser.add_argument('--leave-open', action='store_true')
     parser.add_argument('--no-capture', action='store_true')
     args = parser.parse_args()
+    args.mapping |= args.selection
     folder = args.out.resolve()
     fixtures(folder)
     log = folder/'editor.log'
@@ -63,7 +65,7 @@ def main():
         print(json.dumps(row), flush=True)
 
     with log.open('w') as output:
-        app = subprocess.Popen([str(Path('target/release/canvas-editor').resolve()), f'--editor-probe={folder}', *(['--mapping-probe'] if args.mapping else [])], stdout=output, stderr=subprocess.STDOUT)
+        app = subprocess.Popen([str(Path('target/release/canvas-editor').resolve()), f'--editor-probe={folder}', *(['--mapping-probe'] if args.mapping else []), *(['--selection-probe'] if args.selection else [])], stdout=output, stderr=subprocess.STDOUT)
         (folder/'pid').write_text(str(app.pid))
         event('launch', pid=app.pid)
 
@@ -81,7 +83,7 @@ def main():
 
         try:
             deadline = time.monotonic()+(180 if args.mapping else 30)
-            marker = 'canvas_mapping_probe passed=1' if args.mapping else 'editor_probe passed=1'
+            marker = 'viewport_selection_probe passed=1' if args.selection else ('canvas_mapping_probe passed=1' if args.mapping else 'editor_probe passed=1')
             captured_dialogs = set()
             while marker not in log.read_text():
                 if args.mapping and not args.no_capture and not args.clean_only:
@@ -99,7 +101,7 @@ def main():
                 activate(app.pid)
                 event('foreground_requested')
             if args.mapping:
-                doc = json.loads((folder/'mapping.rastera.json').read_text())
+                doc = json.loads((folder/('selection.rastera.json' if args.selection else 'mapping.rastera.json')).read_text())
                 for side, viewport in zip(['left','right'], doc['viewports']):
                     SIDES[side] = 'Rastera — Native clean output — '+viewport['name']+' (automated probe)'
             window(ROOT, 'layout', 20, 50, 1500, 680)

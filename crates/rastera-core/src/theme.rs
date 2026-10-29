@@ -1,5 +1,5 @@
 //! Rastera tokens. Document content colors are independent of UI styling.
-pub const WORKSPACE: [u8; 4] = [0x19, 0x15, 0x1f, 255];
+pub const WORKSPACE: [u8; 4] = [0x17, 0x15, 0x1A, 255];
 pub const DEEP_PLUM: [u8; 4] = [0x41, 0x11, 0x41, 255];
 pub const RASTER_PURPLE: [u8; 4] = [0x5f, 0x0e, 0x61, 255];
 pub const SIGNAL_MINT: [u8; 4] = [0x26, 0xd0, 0x85, 255];
