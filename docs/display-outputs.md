@@ -1,5 +1,7 @@
 # Assigned-display outputs — review milestone
 
+Capture sources and schema 5 now extend this checkpoint: see [capture devices](capture-devices.md). Earlier verification and limitations are retained.
+
 October 29, 2026. `feature/display-outputs`, based on `e05ea35775d9b71482393d184d80bad4971961b2`. This adds native display destinations; first-canvas/production acceptance and existing pause/capture limitations remain pending.
 
 ## Run, assign and recover

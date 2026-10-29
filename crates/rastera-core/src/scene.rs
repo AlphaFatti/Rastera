@@ -58,6 +58,7 @@ pub struct TextObject {
 pub enum Content {
     Image(Id),
     Text(Id),
+    Capture(Id),
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -83,6 +84,7 @@ pub struct Document {
     pub test_background: bool,
     pub images: BTreeMap<Id, ImageAsset>,
     pub texts: BTreeMap<Id, TextObject>,
+    pub captures: BTreeMap<Id, crate::capture::Source>,
     /// Bottom to top. Layer IDs remain stable through edits/reordering/save/load.
     pub layers: Vec<Layer>,
 }
@@ -95,7 +97,7 @@ fn new_project_id() -> String {
 impl Default for Document {
     fn default() -> Self {
         Self {
-            version: 4,
+            version: 5,
             project_id: new_project_id(),
             canvas: [WIDTH, HEIGHT],
             viewports: crate::mapping::defaults(),
@@ -104,6 +106,7 @@ impl Default for Document {
             test_background: false,
             images: BTreeMap::new(),
             texts: BTreeMap::new(),
+            captures: BTreeMap::new(),
             layers: vec![],
         }
     }
@@ -208,6 +211,41 @@ impl Document {
         self.images.insert(source, asset);
         self.add_layer(name, Content::Image(source), rect, true)
     }
+    pub fn add_capture(&mut self, source: crate::capture::Source) -> Result<Id, String> {
+        source.validate()?;
+        if self.captures.len() >= crate::capture::MAX_SOURCES {
+            return Err("Capture source limit reached (two distinct definitions)".into());
+        }
+        let rect = initial_image_rect_on([source.mode.width, source.mode.height], self.canvas);
+        let name = source.name.clone();
+        let id = self.id();
+        self.captures.insert(id, source);
+        Ok(self.add_layer(name, Content::Capture(id), rect, true))
+    }
+    pub fn assign_capture(&mut self, id: Id, source: crate::capture::Source) -> Result<(), String> {
+        source.validate()?;
+        let aspect = source.mode.width as f32 / source.mode.height as f32;
+        *self
+            .captures
+            .get_mut(&id)
+            .ok_or("Capture definition no longer exists")? = source;
+        for layer in &mut self.layers {
+            if !layer.locked
+                && layer.aspect_lock
+                && matches!(layer.content,Content::Capture(source) if source==id)
+            {
+                let center = [
+                    layer.rect.x + layer.rect.width / 2.,
+                    layer.rect.y + layer.rect.height / 2.,
+                ];
+                layer.rect.width = layer.rect.width.min(layer.rect.height * aspect);
+                layer.rect.height = layer.rect.width / aspect;
+                layer.rect.x = center[0] - layer.rect.width / 2.;
+                layer.rect.y = center[1] - layer.rect.height / 2.;
+            }
+        }
+        Ok(())
+    }
     fn add_layer(&mut self, name: String, content: Content, rect: Rect, aspect_lock: bool) -> Id {
         let id = self.id();
         self.layers.push(Layer {
@@ -267,6 +305,18 @@ impl Document {
             .collect();
         self.images.retain(|id, _| images.contains(id));
         self.texts.retain(|id, _| texts.contains(id));
+        let captures: BTreeSet<_> = self
+            .layers
+            .iter()
+            .filter_map(|l| {
+                if let Content::Capture(id) = l.content {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        self.captures.retain(|id, _| captures.contains(id));
     }
     pub fn aspect(&self, id: Id) -> Option<f32> {
         let layer = self.layer(id)?;
@@ -276,6 +326,9 @@ impl Document {
         if let Content::Image(source) = layer.content {
             let asset = self.images.get(&source)?;
             Some(asset.width as f32 / asset.height as f32)
+        } else if let Content::Capture(source) = layer.content {
+            let c = self.captures.get(&source)?;
+            Some(c.mode.width as f32 / c.mode.height as f32)
         } else {
             None
         }
@@ -288,8 +341,8 @@ impl Document {
             .map(|l| l.id)
     }
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != 4 {
-            return Err("Unsupported project version (expected v4)".into());
+        if self.version != 5 {
+            return Err("Unsupported project version (expected v5)".into());
         }
         if self.project_id.len() != 32 || !self.project_id.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("Invalid project identity".into());
@@ -341,6 +394,15 @@ impl Document {
                 return Err("Invalid text object (font 4–512 px, text ≤16384 bytes)".into());
             }
         }
+        if self.captures.len() > crate::capture::MAX_SOURCES {
+            return Err("Capture limit: two source definitions".into());
+        }
+        for (&id, capture) in &self.captures {
+            if id == 0 || !ids.insert(id) {
+                return Err("Invalid capture source ID".into());
+            }
+            capture.validate()?;
+        }
         let mut used_images = BTreeSet::new();
         for l in &self.layers {
             let r = l.rect;
@@ -368,6 +430,11 @@ impl Document {
                         .ok_or("Missing image object reference")?;
                     if used_images.insert(id) {
                         pixels += a.width as u64 * a.height as u64;
+                    }
+                }
+                Content::Capture(id) => {
+                    if !self.captures.contains_key(&id) {
+                        return Err("Missing capture source reference".into());
                     }
                 }
                 Content::Text(id) => {
@@ -613,7 +680,7 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
             value["viewports"] = serde_json::to_value(crate::mapping::defaults()).unwrap();
         }
         Some(2) => {}
-        Some(3) | Some(4) => {}
+        Some(3) | Some(4) | Some(5) => {}
         _ => return Err("Unsupported project schema version".into()),
     }
     if value["version"].as_u64().is_some_and(|v| v < 3) {
@@ -636,11 +703,15 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
             .into();
         value["version"] = 3.into();
     }
-    if value["version"].as_u64() != Some(4) {
+    if value["version"].as_u64().is_some_and(|v| v < 4) {
         if value.get("project_id").is_none() {
             value["project_id"] = new_project_id().into();
         }
         value["version"] = 4.into();
+    }
+    if value["version"].as_u64() != Some(5) {
+        value["captures"] = serde_json::json!({});
+        value["version"] = 5.into();
     }
     let mut doc: Document = serde_json::from_value(value).map_err(|e| e.to_string())?;
     doc.validate()?;
@@ -951,7 +1022,7 @@ mod tests {
         assert!(saved.contains("../alpha.png"));
         assert_eq!(load_project(&path).unwrap(), doc);
         let bad = base.join("bad.json");
-        std::fs::write(&bad, saved.replace("\"version\": 4", "\"version\": 99")).unwrap();
+        std::fs::write(&bad, saved.replace("\"version\": 5", "\"version\": 99")).unwrap();
         assert!(load_project(&bad).is_err());
         std::fs::remove_file(&media).unwrap();
         assert!(load_project(&path).unwrap_err().contains("alpha.png"));

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.2-dev — capture-device review work
+
+- AVFoundation video sources as shared ordinary canvas layers, with bounded BGRA uploads, mode/device selection, source status, lifecycle sharing and schema-5 projects.
+- Signed Rastera.app development bundle with stable camera identity/usage description/entitlement and explicit consent action.
+- Real FaceTime HD Camera and OBS Virtual Camera tested together; user confirmed moving pictures/overlays in windowed and fullscreen outputs. Physical unplug/replug and a second physical device remain pending. No audio, DeckLink SDK or zero-copy capture claim.
+
 ## 0.0.1 — development preview — October 29, 2026
 
 - Image/text canvas editor with layers, history, projects, custom canvas sizes and viewport mapping.

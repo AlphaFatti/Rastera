@@ -10,6 +10,26 @@ fn main() {
         return;
     }
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    println!("cargo:rerun-if-changed=native/capture.mm");
+    let capture_object = out.join("capture.o");
+    run(Command::new("xcrun")
+        .args([
+            "--sdk",
+            "macosx",
+            "clang++",
+            "-std=c++17",
+            "-fobjc-arc",
+            "-fblocks",
+            "-mmacosx-version-min=14.0",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-Wno-unused-parameter",
+            "-c",
+            "native/capture.mm",
+            "-o",
+        ])
+        .arg(&capture_object));
     let object = out.join("shared_canvas.o");
     run(Command::new("xcrun")
         .args([
@@ -35,12 +55,16 @@ fn main() {
     run(Command::new("ar")
         .arg("crs")
         .arg(out.join("librastera_shared_canvas.a"))
-        .arg(object));
+        .arg(object)
+        .arg(capture_object));
     println!("cargo:rustc-link-search=native={}", out.display());
     println!("cargo:rustc-link-lib=static=rastera_shared_canvas");
     for framework in [
         "AppKit",
         "IOKit",
+        "AVFoundation",
+        "CoreMedia",
+        "CoreVideo",
         "QuartzCore",
         "Metal",
         "Foundation",

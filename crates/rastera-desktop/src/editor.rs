@@ -139,6 +139,7 @@ enum Action {
 }
 pub(super) struct Editor {
     pub engine: SceneEngine,
+    pub(super) capture: super::capture::Capture,
     pub doc: Document,
     pub(super) destinations: super::destinations::Destinations,
     output_project_reload: bool,
@@ -174,10 +175,12 @@ impl Editor {
         let device_limit = device.limits().max_texture_dimension_2d;
         let library = mapping::library();
         let engine = SceneEngine::with_fonts(device, queue, library.clone());
+        let capture = super::capture::Capture::new(engine.captures());
         let doc = Document::default();
         let revision = engine.submit(doc.clone());
         let mut editor = Self {
             engine,
+            capture,
             destinations: super::destinations::Destinations::new(),
             output_project_reload: false,
             output_disable_requested: false,
@@ -589,7 +592,26 @@ impl Editor {
             std::mem::take(&mut self.output_project_reload),
             outputs,
         );
+        self.capture.reconcile(&self.doc);
         mapping::apply_theme(ctx);
+        if let Some((target, source)) = self.capture.dialog_ui(ctx) {
+            self.finish_gesture();
+            self.finish_inspector();
+            let before = self.doc.clone();
+            if let Some(id) = target {
+                if let Err(error) = self.doc.assign_capture(id, source) {
+                    self.error = Some(error);
+                }
+            } else {
+                self.change_mode(Mode::Canvas);
+                match self.doc.add_capture(source) {
+                    Ok(id) => self.selected = Some(id),
+                    Err(e) => self.error = Some(e),
+                }
+            }
+            self.history.record(before, &self.doc);
+            self.publish();
+        }
         let mut action = None;
         let loading = self.busy_file
             || self.pending_load.is_some()
@@ -598,6 +620,13 @@ impl Editor {
         egui::TopBottomPanel::top("editor_toolbar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.strong("Live Edit — changes affect outputs");
+                if ui
+                    .add_enabled(!loading, egui::Button::new("Add Capture Device…"))
+                    .clicked()
+                {
+                    self.capture.target = None;
+                    self.capture.request();
+                }
                 if ui.button("Disable All Outputs · ⌘⇧Esc").clicked() {
                     unsafe { super::rastera_outputs_disable_all() };
                     outputs.clear();
@@ -820,14 +849,21 @@ impl Editor {
                                 egui::Slider::new(&mut layer.opacity, 0.0..=1.).text("Opacity"),
                             );
                             ended |= r.drag_stopped();
-                            if matches!(layer.content, Content::Image(_)) {
+                            if matches!(layer.content, Content::Image(_)|Content::Capture(_)) {
                                 let r =
-                                    ui.checkbox(&mut layer.aspect_lock, "Lock image aspect ratio");
+                                    ui.checkbox(&mut layer.aspect_lock, "Lock source aspect ratio");
                                 ended |= r.changed();
                             }
                         });
                         let source = layer.content.clone();
                         let locked = layer.locked;
+                        if let Content::Capture(id)=source {
+                            let source=&self.doc.captures[&id];let status=self.capture.status(&self.doc,id);
+                            ui.separator();ui.label(format!("{} · {}",source.name,status.phase));ui.label(format!("Requested {}×{} @ {:.3} fps",source.mode.width,source.mode.height,source.mode.fps));ui.label(format!("Actual {}×{} BGRA · negotiated {:.3} fps · observed {:.2} fps · {} delivered / {} upload operations",status.actual[0],status.actual[1],status.negotiated_fps,status.cadence,status.frames,status.uploaded));
+                            ui.small("Unavailable signal draws black. All layer copies share this source session.");
+                            if ui.add_enabled(!loading&&!locked,egui::Button::new("Reassign device / format…")).clicked(){self.capture.edit(id,source);}
+                            if ui.add_enabled(!loading&&!locked,egui::Button::new("Retry source / request permission")).clicked(){self.capture.retry(&self.doc,id);self.capture.edit(id,source);}
+                        }
                         if let Content::Text(source) = source {
                             let text = self.doc.texts.get_mut(&source).unwrap();
                             ui.add_enabled_ui(!loading && !locked, |ui| {

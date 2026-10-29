@@ -6,6 +6,14 @@ This WIP checkpoint does not signify milestone acceptance. Individual native tra
 
 Status recorded October 29, 2026. This is an engineering prototype, not a production live-show application. The architecture blueprint remains the long-term direction.
 
+## Capture devices — 0.0.2-dev
+
+`feature/capture-devices` starts at tagged preview `v0.0.1` (`c3b2258`). Video-only AVFoundation sources now have reusable core definitions/ordinary layers, shared sessions, exact device/mode persistence, explicit camera permission, bounded latest BGRA delivery and producer uploads without per-frame scene preparation. A signed Rastera.app development bundle supplies stable identity/usage description/camera entitlement. Schema 5 migrates older projects and preserves missing/unauthorized definitions. Existing display destinations/leases remain. [Guide and actual results](capture-devices.md).
+
+Required formatting/check/Clippy/release and signature verification, 42 core tests, eight destination-test executions across native binaries, one desktop test (51 Rust test executions) and nine Python tests pass. Native tests delivered FaceTime 1280×720 @30 and OBS Virtual Camera 1920×1080 @60 together, changed FaceTime to 640×480 and back while OBS stayed Live, verified duplication/refcount retirement/undo, save/reopen and fresh-process reopening, and exercised native operator minimize/restore. Final test shutdowns drained capture and 0/4 canvas slots. Existing fullscreen/dynamic/editor regressions pass.
+
+The user confirmed both moving pictures and image/text overlays look correct in windowed/fullscreen outputs after OBS/DVD was placed separately from FaceTime. This observation is scoped to that test. Second physical-device testing, physical disconnect/reconnect, hardware No Signal, actual denied/restricted OS settings and sustained operation remain pending. This uses CPU upload copies; no zero-copy, audio, native DeckLink SDK or general pause fix is claimed. Prior pause/capture limitations remain.
+
 ## v0.0.1 development preview checkpoint
 
 The user reports that fullscreen works successfully. This is a human report of successful fullscreen operation, not blanket acceptance of every display/transition case. Version metadata is aligned to 0.0.1. The specifically unverified hardware/Spaces cases and known operator-pause/capture limitations below remain. See [changelog](../CHANGELOG.md).

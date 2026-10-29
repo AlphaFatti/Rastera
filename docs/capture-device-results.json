@@ -1,0 +1,187 @@
+{
+  "checks": [
+    "real BGRA input and producer upload",
+    "input frame hash advancement",
+    "no document rebuild on video frames",
+    "image/text/capture shared composition",
+    "duplicate shares session",
+    "remove one preserves session",
+    "last removal retires session",
+    "undo restarts safely",
+    "capture project round trip",
+    "windowed and available fullscreen consumers"
+  ],
+  "limitations": [
+    "Human image color/orientation/motion and physical disconnect/reconnect remain separate",
+    "No CPU canvas readback or zero-copy claim",
+    "Capture pictures remain local and are not committed"
+  ],
+  "passed": true,
+  "records": [
+    {
+      "device": "FaceTime HD Camera",
+      "model": "FaceTime HD Camera"
+    },
+    {
+      "actual": [
+        1280,
+        720
+      ],
+      "bounded_replacements": 42,
+      "delivered": 43,
+      "input_hash_changed": true,
+      "negotiated_fps": 30.0,
+      "observed_fps": 30.101499396321955,
+      "phase": "composed",
+      "sessions": 1,
+      "uploaded": 44
+    },
+    {
+      "model": "OBS Camera Extension",
+      "second_device": "OBS Virtual Camera"
+    },
+    {
+      "actual": [
+        1920,
+        1080
+      ],
+      "input_hash_changed": true,
+      "negotiated_fps": 60.0,
+      "observed_fps": 60.06450838874247,
+      "phase": "Live",
+      "second_live": true
+    },
+    {
+      "actual": [
+        640,
+        480
+      ],
+      "format_change_verified": true,
+      "negotiated_fps": 30.0
+    }
+  ],
+  "resource_limit": 2,
+  "second_device_available": true,
+  "video_only": true,
+  "version": "0.0.2-dev",
+  "bundle_identifier": "org.rastera.desktop.dev",
+  "checkpoint_v001": "c3b2258",
+  "human_observation": {
+    "user": "Both pictures and overlays look correct",
+    "scope": "FaceTime large picture plus OBS/DVD inset, windowed and fullscreen; not blanket acceptance of all hardware/transition cases"
+  },
+  "minimize_cycles": [
+    {
+      "cycle": 0,
+      "start_host_s": 436814.727103291,
+      "restore_request_host_s": 436816.30103375,
+      "delivery_samples": [
+        {
+          "session": 3,
+          "frames": 360,
+          "width": 1920,
+          "height": 1080,
+          "callback_host_s": 436815.088526583
+        },
+        {
+          "session": 5,
+          "frames": 30,
+          "width": 1280,
+          "height": 720,
+          "callback_host_s": 436815.111181042
+        },
+        {
+          "session": 3,
+          "frames": 390,
+          "width": 1920,
+          "height": 1080,
+          "callback_host_s": 436815.584422542
+        },
+        {
+          "session": 3,
+          "frames": 420,
+          "width": 1920,
+          "height": 1080,
+          "callback_host_s": 436816.08480225
+        },
+        {
+          "session": 5,
+          "frames": 60,
+          "width": 1280,
+          "height": 720,
+          "callback_host_s": 436816.10854325
+        }
+      ]
+    },
+    {
+      "cycle": 1,
+      "start_host_s": 436816.968248958,
+      "restore_request_host_s": 436818.7316285,
+      "delivery_samples": [
+        {
+          "session": 3,
+          "frames": 480,
+          "width": 1920,
+          "height": 1080,
+          "callback_host_s": 436817.083997917
+        },
+        {
+          "session": 5,
+          "frames": 90,
+          "width": 1280,
+          "height": 720,
+          "callback_host_s": 436817.106487208
+        },
+        {
+          "session": 3,
+          "frames": 510,
+          "width": 1920,
+          "height": 1080,
+          "callback_host_s": 436817.585476375
+        },
+        {
+          "session": 3,
+          "frames": 540,
+          "width": 1920,
+          "height": 1080,
+          "callback_host_s": 436818.085394583
+        },
+        {
+          "session": 5,
+          "frames": 120,
+          "width": 1280,
+          "height": 720,
+          "callback_host_s": 436818.128634917
+        },
+        {
+          "session": 3,
+          "frames": 570,
+          "width": 1920,
+          "height": 1080,
+          "callback_host_s": 436818.584366208
+        }
+      ]
+    }
+  ],
+  "shutdown": {
+    "capture_drained": true,
+    "canvas_slots_zero": true,
+    "returncode": 0
+  },
+  "fresh_process_reopen": {
+    "passed": true,
+    "capture_drained": true,
+    "canvas_slots_zero": true
+  },
+  "hardware_scope": {
+    "physical_camera": "FaceTime HD Camera",
+    "virtual_source": "OBS Virtual Camera / OBS Camera Extension",
+    "second_physical_capture_device_tested": false,
+    "physical_disconnect_reconnect_tested": false
+  },
+  "copies": [
+    "CVPixelBuffer read-only lock to owned packed BGRA Vec on callback queue",
+    "wgpu write_texture CPU staging copy",
+    "GPU staging upload to input texture; canvas composition then native shared output, no CPU canvas readback"
+  ]
+}

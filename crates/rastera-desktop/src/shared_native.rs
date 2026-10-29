@@ -1,3 +1,5 @@
+#[path = "capture.rs"]
+mod capture;
 #[path = "outputs.rs"]
 mod destinations;
 #[path = "editor.rs"]

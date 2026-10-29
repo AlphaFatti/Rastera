@@ -1,8 +1,21 @@
 # Rastera
 
-Rastera is a free, open-source live video and presentation application in early development, targeting Apple silicon Macs first. A possible Windows port is future work. The ambition is a flexible live production canvas, output routing, and presentation workflow; the current application is an early image/text canvas editor alongside preserved GPU diagnostic baselines.
+Rastera is a free, open-source live video and presentation application in early development, targeting Apple silicon Macs first. A possible Windows port is future work. The ambition is a flexible live production canvas, output routing, and presentation workflow; the current application is an early image/text/live-capture canvas editor alongside preserved GPU diagnostic baselines.
 
 The long-term [architecture blueprint](docs/architecture.md) describes planned work, not implemented capabilities. See [development status](docs/development-status.md) for the current scope and verification record. An application source license still needs to be selected before a public release.
+
+## Capture-enabled development app (0.0.2-dev)
+
+```sh
+./tools/build-app.sh
+open target/Rastera.app
+```
+
+Use **Add Capture Device…**, allow Rastera camera access, choose an AVFoundation device and resolution/frame rate, then add it to the canvas. The signed development bundle has the camera usage description/entitlement and stable identity needed for consistent native permission testing. Capture layers share sessions when duplicated and support normal editing/history. The inspector reports actual BGRA format/cadence and device status; missing/unauthorized sources remain saved and draw black.
+
+Two source definitions are supported, up to 1920×1080 pixels (either orientation) at 1–60 fps. This is a bounded upload-copy path, not zero-copy capture; the display path still has no CPU canvas readback. Projects save as schema 5 with explicit v1–v4 migration. Existing assigned-display destinations and Disable All Outputs remain; that recovery action does not stop referenced camera sources. Audio and the native DeckLink SDK remain future work.
+
+[Capture architecture, exact commands, measured devices and remaining checks](docs/capture-devices.md) separate automated/native evidence from the user's successful FaceTime-plus-OBS/DVD picture observation. [v0.0.1](https://github.com/AlphaFatti/Rastera/tree/v0.0.1) is the prior fullscreen development-preview checkpoint; main remains unmerged.
 
 ## Canvas editor (WIP, macOS 14+)
 
@@ -22,7 +35,7 @@ Try all seven output presets (first four windows open initially):
 cargo run --release --locked -p rastera-desktop --bin canvas-editor -- --project=examples/dynamic-viewports.rastera.json --outputs=4
 ```
 
-Add/Remove Selected and each viewport’s Open clean output control are in Viewports mode. Closing a window preserves its logical definition. Undoing deletion restores the definition with its original ID, without reopening the window. Projects save as schema 4 with portable project identity; versions 1/2/3 migrate explicitly, preserving their sampling. Saved empty viewport lists stay empty. Assigned-display fullscreen is available as a review prototype; see below.
+Add/Remove Selected and each viewport’s Open clean output control are in Viewports mode. Closing a window preserves its logical definition. Undoing deletion restores the definition with its original ID, without reopening the window. Projects save as schema 5 with portable project identity and capture definitions; versions 1–4 migrate explicitly, preserving their sampling. Saved empty viewport lists stay empty. Assigned-display fullscreen is available as a review prototype; see below.
 
 ## Assigned-display fullscreen (review prototype)
 

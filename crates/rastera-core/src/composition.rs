@@ -21,12 +21,18 @@ use wgpu::util::DeviceExt;
 struct GpuImage {
     view: wgpu::TextureView,
     _texture: wgpu::Texture,
+    black: Option<Arc<Vec<u8>>>,
 }
 struct Draw {
     bind: wgpu::BindGroup,
     _image: Arc<GpuImage>,
 }
+struct LiveImage {
+    image: Arc<GpuImage>,
+    slot: Arc<crate::capture::Slot>,
+}
 struct Prepared {
+    captures: Vec<LiveImage>,
     revision: u64,
     background: bool,
     layers: Vec<Draw>,
@@ -50,6 +56,7 @@ struct Shared {
     applied: AtomicU64,
     stop: AtomicBool,
     status: Mutex<Option<PreparationStatus>>,
+    captures: Arc<crate::capture::Hub>,
 }
 #[derive(Debug)]
 pub struct PreparationStatus {
@@ -65,6 +72,7 @@ pub struct SceneFeed {
     shared: Arc<Shared>,
     material: Arc<Material>,
     current: Option<Arc<Prepared>>,
+    capture_uploads: HashMap<usize, (u64, u64)>,
 }
 fn wait_error(
     future: impl std::future::Future<Output = Option<wgpu::Error>>,
@@ -100,6 +108,7 @@ impl SceneEngine {
             applied: AtomicU64::new(0),
             stop: AtomicBool::new(false),
             status: Mutex::new(None),
+            captures: Arc::new(crate::capture::Hub::default()),
         });
         let state = shared.clone();
         let gpu = material.clone();
@@ -189,7 +198,7 @@ impl SceneEngine {
                         (&fonts, &library),
                         &doc,
                         &mut cache,
-                        g,
+                        (g, &state.captures),
                     );
                     let validation = wait_error(device.pop_error_scope());
                     let memory = wait_error(device.pop_error_scope());
@@ -230,7 +239,11 @@ impl SceneEngine {
             shared: self.shared.clone(),
             material: self.material.clone(),
             current: None,
+            capture_uploads: HashMap::new(),
         }
+    }
+    pub fn captures(&self) -> Arc<crate::capture::Hub> {
+        self.shared.captures.clone()
     }
     pub fn submit(&self, doc: Document) -> u64 {
         let revision = self.shared.desired.fetch_add(1, Ordering::SeqCst) + 1;
@@ -263,6 +276,45 @@ impl SceneFeed {
         seconds: f32,
         pattern: &PatternGenerator,
     ) -> wgpu::CommandEncoder {
+        if let Some(scene) = &self.current {
+            for live in &scene.captures {
+                let Some(frame) = live.slot.snapshot() else {
+                    continue;
+                };
+                let epoch = live.slot.epoch.load(Ordering::Acquire);
+                let frame = frame.filter(|f| {
+                    f.width == live.image._texture.width()
+                        && f.height == live.image._texture.height()
+                });
+                let sequence = frame.as_ref().map(|f| f.sequence).unwrap_or(0);
+                let key = Arc::as_ptr(&live.image) as usize;
+                if self.capture_uploads.get(&key) != Some(&(epoch, sequence)) {
+                    let bytes = frame
+                        .as_ref()
+                        .map(|f| f.bgra.as_slice())
+                        .unwrap_or_else(|| live.image.black.as_ref().unwrap().as_slice());
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &live.image._texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        bytes,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(live.image._texture.width() * 4),
+                            rows_per_image: Some(live.image._texture.height()),
+                        },
+                        live.image._texture.size(),
+                    );
+                    self.capture_uploads.insert(key, (epoch, sequence));
+                    if sequence > 0 {
+                        live.slot.uploaded();
+                    }
+                }
+            }
+        }
         let mut encoder = if self.current.as_ref().is_some_and(|s| s.background) {
             pattern.encode_size(
                 device,
@@ -317,6 +369,7 @@ impl SceneFeed {
     pub(crate) fn begin_frame(&mut self) -> Option<(Arc<Generation>, crate::mapping::FrameMeta)> {
         if let Ok(mut ready) = self.shared.ready.try_lock() {
             if let Some(scene) = ready.take() {
+                self.capture_uploads.clear();
                 self.current = Some(scene);
             }
         }
@@ -482,10 +535,12 @@ fn prepare(
     text: (&Fonts, &crate::fonts::FontLibrary),
     doc: &Document,
     cache: &mut HashMap<String, Arc<GpuImage>>,
-    generation: Arc<Generation>,
+    (generation, hub): (Arc<Generation>, &crate::capture::Hub),
 ) -> Result<Prepared, String> {
     let (fonts, library) = text;
     doc.validate()?;
+    let mut captures = Vec::new();
+    let mut capture_ids = HashSet::new();
     let mut layers = vec![];
     let mut used = HashSet::new();
     for layer in &doc.layers {
@@ -500,6 +555,11 @@ fn prepare(
                     .map_err(|e| format!("Missing image {}: {e}", a.path.display()))?;
                 format!("image:{:?}:{:?}:{}", a.path, m.modified(), m.len())
             }
+            Content::Capture(id) => format!(
+                "capture:{}:{id}:{}",
+                doc.project_id,
+                serde_json::to_string(&doc.captures[&id].mode).unwrap()
+            ),
             Content::Text(id) => format!(
                 "text:{}:{}:{}",
                 serde_json::to_string(&doc.texts[&id]).map_err(|e| e.to_string())?,
@@ -523,6 +583,14 @@ fn prepare(
                         .decode()
                         .map_err(|e| format!("Cannot decode {}: {e}", a.path.display()))?
                         .to_rgba8()
+                }
+                Content::Capture(id) => {
+                    let mode = &doc.captures[&id].mode;
+                    image::RgbaImage::from_pixel(
+                        mode.width,
+                        mode.height,
+                        image::Rgba([0, 0, 0, 255]),
+                    )
                 }
                 Content::Text(id) => {
                     let text = &doc.texts[&id];
@@ -554,7 +622,11 @@ fn prepare(
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
+                format: if matches!(layer.content, Content::Capture(_)) {
+                    wgpu::TextureFormat::Bgra8Unorm
+                } else {
+                    wgpu::TextureFormat::Rgba8Unorm
+                },
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
@@ -576,10 +648,23 @@ fn prepare(
             let image = Arc::new(GpuImage {
                 view: texture.create_view(&Default::default()),
                 _texture: texture,
+                black: if matches!(layer.content, Content::Capture(_)) {
+                    Some(Arc::new(pixels.into_raw()))
+                } else {
+                    None
+                },
             });
             cache.insert(key.clone(), image.clone());
             image
         };
+        if let Content::Capture(id) = layer.content {
+            if capture_ids.insert(id) {
+                captures.push(LiveImage {
+                    image: image.clone(),
+                    slot: hub.slot(&crate::capture::Hub::key(&doc.project_id, id)),
+                });
+            }
+        }
         // Text tiles round allocation up to whole pixels. Crop the fractional
         // edge rather than stretching glyphs when only the wrapping box changes.
         let uv = if matches!(layer.content, Content::Text(_)) {
@@ -637,6 +722,7 @@ fn prepare(
     }
     cache.retain(|k, _| used.contains(k));
     Ok(Prepared {
+        captures,
         revision: 0,
         background: doc.test_background,
         generation,

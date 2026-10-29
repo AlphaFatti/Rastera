@@ -1,5 +1,7 @@
 //! Explicit, noninteractive native replay for busy test desktops. No system input.
 use super::*;
+#[path = "editor_capture_probe.rs"]
+mod capture;
 #[path = "editor_display_probe.rs"]
 mod display;
 #[path = "editor_dynamic_probe.rs"]
@@ -24,10 +26,14 @@ pub(super) struct Probe {
     selection: bool,
     dynamic: Option<dynamic::Dynamic>,
     display: Option<display::DisplayProbe>,
+    capture: Option<capture::CaptureProbe>,
 }
 impl Probe {
     pub fn new(folder: PathBuf) -> Self {
         Self {
+            capture: std::env::args()
+                .any(|a| a == "--capture-probe" || a == "--capture-reopen-probe")
+                .then(|| capture::CaptureProbe::new(folder.clone())),
             display: std::env::args()
                 .any(|a| a == "--display-probe")
                 .then(|| display::DisplayProbe::new(folder.clone())),
@@ -61,6 +67,16 @@ impl Probe {
     ) -> bool {
         if e.busy_file || e.pending_load.is_some() || e.engine.applied() != e.revision {
             return false;
+        }
+        if let Some(capture) = &mut self.capture {
+            return match capture.tick(e, preview, outputs, enabled) {
+                Ok(done) => done,
+                Err(error) => {
+                    log(format!("capture_probe failed=1 error={error}\n"));
+                    e.error = Some(error);
+                    true
+                }
+            };
         }
         if let Some(display) = &mut self.display {
             return match display.tick(e, preview, outputs, enabled) {
