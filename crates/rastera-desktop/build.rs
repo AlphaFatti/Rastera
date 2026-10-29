@@ -44,6 +44,7 @@ fn main() {
         "Foundation",
         "CoreFoundation",
         "UniformTypeIdentifiers",
+        "CoreText",
     ] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }

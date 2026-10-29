@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Synthetic canvas-editor replay plus PID-scoped native transitions.
 
-No global input, foreground activation or desktop-region captures. The editor's
+No global input or desktop-region captures. Foreground activation is opt-in. The editor's
 explicit --editor-probe switch dispatches local NSEvents to its own child view;
 this is a programmatic interaction test, not human mouse/keyboard acceptance.
 """
@@ -39,6 +39,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--cycles', type=int, default=3)
+    parser.add_argument('--foreground', action='store_true', help='Explicitly activate this test app for an unobscured trial, restoring prior app focus afterward')
+    parser.add_argument('--clean-only', action='store_true', help='Capture only clean outputs, avoiding the known operator-capture disturbance')
+    parser.add_argument('--mapping', action='store_true', help='Extend replay with dynamic canvas, viewport gestures, font and transactional failure checks')
     parser.add_argument('--leave-open', action='store_true')
     parser.add_argument('--no-capture', action='store_true')
     args = parser.parse_args()
@@ -46,6 +49,12 @@ def main():
     fixtures(folder)
     log = folder/'editor.log'
     events = []
+    prior_pid = None
+    if args.foreground:
+        prior_pid = int(subprocess.check_output(['osascript','-l','JavaScript','-e','ObjC.import("AppKit"); $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier'], text=True))
+
+    def activate(pid):
+        subprocess.run(['osascript','-l','JavaScript','-e',f'ObjC.import("AppKit"); $.NSRunningApplication.runningApplicationWithProcessIdentifier({pid}).activateWithOptions(2)'], check=True, stdout=subprocess.DEVNULL)
 
     def event(kind, **data):
         row = dict(event=kind, host_s=time.monotonic(), **data)
@@ -54,7 +63,7 @@ def main():
         print(json.dumps(row), flush=True)
 
     with log.open('w') as output:
-        app = subprocess.Popen([str(Path('target/release/canvas-editor').resolve()), f'--editor-probe={folder}'], stdout=output, stderr=subprocess.STDOUT)
+        app = subprocess.Popen([str(Path('target/release/canvas-editor').resolve()), f'--editor-probe={folder}', *(['--mapping-probe'] if args.mapping else [])], stdout=output, stderr=subprocess.STDOUT)
         (folder/'pid').write_text(str(app.pid))
         event('launch', pid=app.pid)
 
@@ -71,20 +80,35 @@ def main():
             event('capture', title=title, file=name, start_host_s=start, end_host_s=time.monotonic())
 
         try:
-            deadline = time.monotonic()+30
-            while 'editor_probe passed=1' not in log.read_text():
+            deadline = time.monotonic()+(180 if args.mapping else 30)
+            marker = 'canvas_mapping_probe passed=1' if args.mapping else 'editor_probe passed=1'
+            captured_dialogs = set()
+            while marker not in log.read_text():
+                if args.mapping and not args.no_capture and not args.clean_only:
+                    for title, name in [('Rastera — Fonts', 'font-dialog.png'), ('Rastera — Canvas settings', 'settings-dialog.png')]:
+                        if title not in captured_dialogs and any(w['title'] == title for w in windows()):
+                            capture(title, name)
+                            captured_dialogs.add(title)
                 if app.poll() is not None or 'editor_probe failed_phase=' in log.read_text():
                     raise RuntimeError('Editor replay failed; retain log')
                 if time.monotonic() >= deadline:
                     raise TimeoutError('Editor replay did not finish')
                 time.sleep(.1)
-            event('replay_passed')
+            event('replay_passed', mapping=args.mapping)
+            if args.foreground:
+                activate(app.pid)
+                event('foreground_requested')
+            if args.mapping:
+                doc = json.loads((folder/'mapping.rastera.json').read_text())
+                for side, viewport in zip(['left','right'], doc['viewports']):
+                    SIDES[side] = 'Rastera — Native clean output — '+viewport['name']+' (automated probe)'
             window(ROOT, 'layout', 20, 50, 1500, 680)
             for side, x in [('left', 20), ('right', 700)]:
                 window(SIDES[side], 'layout', x, 740, 640, 350)
             time.sleep(.5)
             if not args.no_capture:
-                capture(ROOT, 'operator.png')
+                if not args.clean_only:
+                    capture(ROOT, 'operator.png')
                 for side in SIDES:
                     capture(SIDES[side], side+'.png')
             # Operator capture is a known adverse condition. Exclude this warmup from transitions.
@@ -116,7 +140,7 @@ def main():
                         event('native_confirm', case=case, cycle=cycle+1, mode=mode, minimized=state)
                         time.sleep(.2)
             event('measure_end')
-            if not args.no_capture:
+            if not args.no_capture and not args.mapping:
                 for side, x in [('left', 20), ('right', 820)]:
                     window(SIDES[side], 'layout', x, 120, 960, 568)
                     time.sleep(.15)
@@ -127,6 +151,9 @@ def main():
                 window(ROOT, 'close')
                 app.wait(timeout=15)
                 event('closed', returncode=app.returncode)
+            if prior_pid is not None:
+                activate(prior_pid)
+                event('prior_focus_restored')
 
 
 if __name__ == '__main__':

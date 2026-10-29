@@ -196,7 +196,22 @@ impl PatternGenerator {
         target: &wgpu::TextureView,
         seconds: f32,
     ) -> wgpu::CommandEncoder {
-        queue.write_buffer(&self.uniform, 0, &seconds.to_ne_bytes());
+        self.encode_size(device, queue, target, seconds, [WIDTH, HEIGHT])
+    }
+    pub fn encode_size(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::TextureView,
+        seconds: f32,
+        size: [u32; 2],
+    ) -> wgpu::CommandEncoder {
+        let data: Vec<_> = [seconds, size[0] as f32, size[1] as f32, 0.]
+            .into_iter()
+            .flat_map(f32::to_ne_bytes)
+            .collect();
+        queue.write_buffer(&self.uniform, 0, &data);
+
         let mut encoder = device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -221,11 +236,14 @@ impl PatternGenerator {
     }
 }
 pub fn canvas_texture(device: &wgpu::Device) -> wgpu::Texture {
+    canvas_texture_size(device, [WIDTH, HEIGHT])
+}
+pub fn canvas_texture_size(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("3840x1080 shared canvas"),
+        label: Some("shared canvas generation"),
         size: wgpu::Extent3d {
-            width: WIDTH,
-            height: HEIGHT,
+            width: size[0],
+            height: size[1],
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,

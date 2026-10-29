@@ -4,9 +4,19 @@
 
 This WIP checkpoint does not signify milestone acceptance. Individual native transitions were exercised; the stricter all-window automation check remains unverified. Automated checks pass, as detailed below.
 
-Status recorded October 28, 2026. This is an engineering prototype, not a production live-show application. The architecture blueprint remains the long-term direction.
+Status recorded October 29, 2026. This is an engineering prototype, not a production live-show application. The architecture blueprint remains the long-term direction.
 
-## Current editor review work
+## Current canvas-mapping review work
+
+The WIP `feature/canvas-mapping` remote-review checkpoint builds on editor checkpoint `7be441ed18e5bf97aa73fbda5052477bfc6407e9`. Run `cargo run --release --locked -p rastera-desktop --bin canvas-editor`. Settings adds undoable, transactional canvas dimensions; Canvas / Viewports modes add pan/zoom/rotation, persistent output names/colors and separate selections; installed font families/faces affect actual core text preparation. Version-1 projects migrate explicitly to schema 2. Central Rastera tokens and a neutral, always-visible operator-only canvas boundary are implemented. Logical outputs stay 1920 × 1080; default halves remain exact. Diagnostic baselines are preserved.
+
+The producer remains independent, with completion-held native leases and atomic frame dimensions/matrices. Resize allocation is limited to two four-texture generations, each ≤256 MiB nominal RGBA texels; assets, drawables and driver overhead are additional. File/font/text preparation remains off the producer. [The current guide](canvas-mapping.md) documents ownership, limits, schema, controls and exact verification.
+
+Twenty-four Rust tests, nine Python analysis tests, formatting, locked workspace compilation, denied-warning Clippy and the release build pass. Native replay covers odd portrait/landscape resize with outputs open, history, overlapping viewport selection/pan/zoom/rotation, fonts/fallback, save/reopen, both mapped outputs' close/reopen and failed candidate preservation. Actual mouse/keyboard controls accepted dimensions and Menlo Bold, confirmed in a scratch save and reopened for review. Empty black-canvas boundary capture shows all four edges.
+
+Native three-cycle operator/Left/Right transitions recovered and drained with zero GPU errors/outstanding leases. Earlier background/captured trials include missing evidence and a multi-second clean-output gap. A final foreground clean-capture control reports both outputs advancing during the operator case (maximum positive API gap 37.501 ms); clean marker captures change across the trial. Sparse capture timing still cannot exclude a shorter visual pause. These results do not establish human continuity acceptance. The operator UI pause, capture-conditioned stalls, historical all-window check, human/external-display verification and overall milestone acceptance remain pending. Current results and static evidence are linked from the guide.
+
+## Previous canvas-editor checkpoint
 
 The WIP `feature/canvas-editor` review checkpoint builds on `9fbf7f81c2528ccf96143391adc0646bd9f6e976`. Run `cargo run --release --locked -p rastera-desktop --bin canvas-editor` on macOS 14+. It adds reusable image/text document objects, ordered layers, native preview selection/drag/corner resize, an inspector, editing/history, and versioned JSON projects with relative media references. File/image/text preparation is off the independent producer; complete scenes enter the existing four-texture, completion-leased native canvas path. Operator-only selection chrome never enters clean textures. Baseline executables are preserved.
 

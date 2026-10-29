@@ -1,6 +1,8 @@
 // Native consumers of completed rastera-core frames. AppKit stays on main.
 #import <AppKit/AppKit.h>
 #import <Metal/Metal.h>
+#import <CoreText/CoreText.h>
+#import <objc/runtime.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <QuartzCore/QuartzCore.h>
 #include <atomic>
@@ -13,10 +15,13 @@
 #include <thread>
 #include <vector>
 #include <cstring>
-struct SharedFrame { void *texture; void *lease; uint64_t frame; };
+struct SharedFrame { void *texture; void *lease; uint64_t frame; uint32_t width,height; float maps[16]; };
+static_assert(sizeof(SharedFrame)==96,"Shared frame ABI must match Rust");
 extern "C" bool rastera_shared_acquire(void *, SharedFrame *);
 extern "C" void rastera_shared_release(void *);
 extern "C" void rastera_shared_fit(uint32_t,uint32_t,float,float,float *);
+extern "C" void rastera_editor_fit(uint32_t,uint32_t,float,float,float,float *);
+extern "C" void rastera_theme_workspace(float *);
 namespace {
 struct Event { const char *kind; uint64_t frame,drawable,seq; double host,time; };
 struct Stats {
@@ -45,25 +50,31 @@ void report(const std::shared_ptr<Stats> &s) {
 }
 // Operator-only surface state. Never sampled by the canvas producer or clean windows.
 struct EditorPointer { uint32_t kind; float x,y,width,height,scale; };
+struct OverlayLine {float x1,y1,x2,y2,r,g,b,a,width;uint32_t kind;};
+struct OverlayLabel {float x,y;const char *text;float color[4];};
 @interface EditorSelectionView : NSView {
-@public float selection[4]; uint32_t flags; CGSize pixels;
+@public float selection[4]; uint32_t flags; CGSize pixels;uint32_t canvas[2];std::vector<OverlayLine> lines;NSArray *labels;
 }
 @end
 @implementation EditorSelectionView
 - (BOOL)isFlipped { return YES; }
 - (NSView *)hitTest:(NSPoint)point { return nil; }
 - (void)drawRect:(NSRect)dirty {
+    [NSGraphicsContext saveGraphicsState];
+    [NSBezierPath clipRect:self.bounds];
     NSRectFillUsingOperation(dirty,NSCompositingOperationClear);
-    if(!flags || pixels.width<=0 || pixels.height<=0) return;
-    float fit[4]; rastera_shared_fit(3840,1080,float(pixels.width),float(pixels.height),fit);
-    const float sx=self.bounds.size.width/pixels.width, sy=self.bounds.size.height/pixels.height;
-    NSRect r=NSMakeRect((fit[0]+selection[0]/3840*fit[2])*sx,(fit[1]+selection[1]/1080*fit[3])*sy,selection[2]/3840*fit[2]*sx,selection[3]/1080*fit[3]*sy);
-    NSColor *stroke=(flags&2)?NSColor.grayColor:NSColor.cyanColor; [stroke setStroke];
-    NSBezierPath *outline=[NSBezierPath bezierPathWithRect:r]; outline.lineWidth=1.5; [outline stroke];
-    if(!(flags&2)) { [NSColor.whiteColor setFill];
-        for(int i=0;i<4;++i) { NSPoint p=NSMakePoint(i%2?NSMaxX(r):NSMinX(r),i/2?NSMaxY(r):NSMinY(r));
-            NSBezierPath *handle=[NSBezierPath bezierPathWithRect:NSMakeRect(p.x-4,p.y-4,8,8)]; [handle fill];[handle stroke]; }
+    if(pixels.width<=0||canvas[0]==0){[NSGraphicsContext restoreGraphicsState];return;}
+    float fit[4];const float sx=self.bounds.size.width/pixels.width,sy=self.bounds.size.height/pixels.height;
+    rastera_editor_fit(canvas[0],canvas[1],pixels.width,pixels.height,20./sx,fit);
+    auto point=[&](float x,float y){return NSMakePoint((fit[0]+x/canvas[0]*fit[2])*sx,(fit[1]+y/canvas[1]*fit[3])*sy);};
+    for(const auto &l:lines){NSColor *color=[NSColor colorWithSRGBRed:l.r green:l.g blue:l.b alpha:l.a];[color setStroke];[color setFill];NSPoint a=point(l.x1,l.y1),b=point(l.x2,l.y2);NSBezierPath *path;
+        if(l.kind==0){path=[NSBezierPath bezierPath];[path moveToPoint:a];[path lineToPoint:b];}
+        else {NSRect r=NSMakeRect(a.x-4,a.y-4,8,8);path=l.kind==1?[NSBezierPath bezierPathWithRect:r]:[NSBezierPath bezierPathWithOvalInRect:r];[path fill];}
+        path.lineWidth=l.width;[path stroke];
     }
+    float bg[4];rastera_theme_workspace(bg);
+    for(NSDictionary *label in labels){NSPoint p=point([label[@"x"] floatValue],[label[@"y"] floatValue]);[label[@"text"] drawAtPoint:NSMakePoint(p.x+6,p.y+6) withAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightSemibold],NSForegroundColorAttributeName:label[@"color"],NSBackgroundColorAttributeName:[NSColor colorWithSRGBRed:bg[0] green:bg[1] blue:bg[2] alpha:0.9]}];}
+    [NSGraphicsContext restoreGraphicsState];
 }
 @end
 @interface SharedCanvasView : NSView {
@@ -112,6 +123,9 @@ API_AVAILABLE(macos(14.0))
     void *_source;
     uint32_t _slice[4];
     BOOL _embedded;
+    int _role;
+    uint32_t _lastWidth,_lastHeight; float _lastMaps[16];
+    std::atomic<float> _margin;
     BOOL _closed;
     std::shared_ptr<Stats> _stats;
     std::thread _worker;
@@ -125,18 +139,22 @@ API_AVAILABLE(macos(14.0))
 - (BOOL)pollPointer:(EditorPointer *)out;
 - (void)replay:(uint32_t)kind x:(float)x y:(float)y;
 - (void)closeOutputForProbe;
+- (void)overlay:(const uint32_t *)canvas lines:(const OverlayLine *)lines count:(uint32_t)count labels:(const OverlayLabel *)labels labelCount:(uint32_t)labelCount;
+- (int)settingsMenu;
+- (void)metrics:(float *)out;
+- (void)outputTitle:(NSString *)name;
 @end
 @implementation SharedCanvasConsumer
 - (BOOL)start:(void *)source host:(NSView *)host role:(int)role slice:(const uint32_t *)slice {
     NSCAssert(NSThread.isMainThread,@"Lifecycle on main");
-    _source=source; _embedded=host!=nil; std::memcpy(_slice,slice,sizeof(_slice));
+    _margin.store(0);_role=role;_source=source; _embedded=host!=nil; std::memcpy(_slice,slice,sizeof(_slice));
     _stats=std::make_shared<Stats>(role==0?"preview":role==1?"left":"right");
     _slots=dispatch_semaphore_create(2); _work=dispatch_group_create();
     SharedFrame first{};
     if(!rastera_shared_acquire(source,&first)) return NO;
     id<MTLTexture> texture=(__bridge id<MTLTexture>)first.texture;
     _device=texture.device; // Use the exact producer MTLDevice, not an assumed default GPU.
-    const bool compatible=texture.width==3840 && texture.height==1080 && texture.pixelFormat==MTLPixelFormatRGBA8Unorm;
+    const bool compatible=texture.width>0 && texture.height>0 && texture.pixelFormat==MTLPixelFormatRGBA8Unorm;
     std::fprintf(stderr,"shared_device role=%s registry_id=%llu exact_producer_device=1 dimensions=%lux%lu compatible=%d reduce_motion=%d main_thread=1\n",_stats->role,(unsigned long long)_device.registryID,(unsigned long)texture.width,(unsigned long)texture.height,compatible,NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion);
     rastera_shared_release(first.lease);
     if(!compatible) return NO;
@@ -144,16 +162,18 @@ API_AVAILABLE(macos(14.0))
     NSString *shader=[NSString stringWithUTF8String:R"MSL(
 #include <metal_stdlib>
 using namespace metal;
-struct Mapping { float4 slice; float4 fit; };
+struct Mapping { float4 row0;float4 row1;float4 fit;float4 logical;float4 background; };
 vertex float4 vertex_main(uint i [[vertex_id]]) {
     const float2 p[3]={float2(-1,-1),float2(3,-1),float2(-1,3)};
     return float4(p[i],0,1);
 }
 fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer(0)]],texture2d<float> canvas [[texture(0)]]) {
     float2 uv=(p.xy-m.fit.xy)/m.fit.zw;
-    if(any(uv<0.0)||any(uv>=1.0)) return float4(0,0,0,1);
-    uint2 pixel=uint2(min(floor(m.slice.xy+uv*m.slice.zw),m.slice.xy+m.slice.zw-1.0));
-    return canvas.read(pixel);
+    if(any(uv<0.0)||any(uv>=1.0)) return m.background;
+    float2 q=uv*m.logical.xy;
+    float2 source=float2(dot(m.row0.xy,q)+m.row0.z,dot(m.row1.xy,q)+m.row1.z);
+    if(any(source<0.0)||source.x>=canvas.get_width()||source.y>=canvas.get_height())return float4(0,0,0,1);
+    return canvas.read(uint2(floor(source)));
 }
 )MSL"];
     NSError *error=nil;
@@ -217,7 +237,7 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
         id<MTLTexture> source=(__bridge id<MTLTexture>)frame.texture;
         id<CAMetalDrawable> drawable=update.drawable;
         if(source.device!=_device || source.device.registryID!=_device.registryID || !drawable ||
-           _slice[0]+_slice[2]>source.width || _slice[1]+_slice[3]>source.height) {
+           frame.width!=source.width || frame.height!=source.height) {
             ++stats->errors; stats->stop=true; rastera_shared_release(frame.lease); dispatch_semaphore_signal(_slots); return;
         }
         const uint64_t drawableID=drawable.drawableID;
@@ -229,9 +249,16 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
         pass.colorAttachments[0].clearColor=MTLClearColorMake(0,0,0,1);
         id<MTLRenderCommandEncoder> encoder=[command renderCommandEncoderWithDescriptor:pass];
         if(!encoder) { ++stats->errors; rastera_shared_release(frame.lease); dispatch_semaphore_signal(_slots); return; }
-        struct Mapping { float slice[4],fit[4]; } mapping;
-        for(int i=0;i<4;++i) mapping.slice[i]=float(_slice[i]);
-        rastera_shared_fit(_slice[2],_slice[3],float(drawable.texture.width),float(drawable.texture.height),mapping.fit);
+        struct Mapping { float row0[4],row1[4],fit[4],logical[4],background[4]; } mapping{};
+        if(_role==0){mapping.row0[0]=1;mapping.row1[1]=1;mapping.logical[0]=frame.width;mapping.logical[1]=frame.height;}
+        else{std::memcpy(mapping.row0,frame.maps+(_role-1)*8,8*sizeof(float));mapping.logical[0]=1920;mapping.logical[1]=1080;}
+        if(_embedded&&_margin.load()>0){rastera_editor_fit(frame.width,frame.height,drawable.texture.width,drawable.texture.height,_margin.load(),mapping.fit);rastera_theme_workspace(mapping.background);}
+        else rastera_shared_fit(mapping.logical[0],mapping.logical[1],drawable.texture.width,drawable.texture.height,mapping.fit);
+        mapping.background[3]=1;
+        if(frame.width!=_lastWidth||frame.height!=_lastHeight||std::memcmp(frame.maps,_lastMaps,sizeof(_lastMaps))){
+            _lastWidth=frame.width;_lastHeight=frame.height;std::memcpy(_lastMaps,frame.maps,sizeof(_lastMaps));
+            fprintf(stderr,"shared_mapping role=%s frame=%llu canvas_w=%u canvas_h=%u row00=%.9g row01=%.9g row02=%.9g row10=%.9g row11=%.9g row12=%.9g\n",stats->role,(unsigned long long)frame.frame,frame.width,frame.height,mapping.row0[0],mapping.row0[1],mapping.row0[2],mapping.row1[0],mapping.row1[1],mapping.row1[2]);
+        }
         [encoder setRenderPipelineState:_pipeline];
         [encoder setFragmentBytes:&mapping length:sizeof(mapping) atIndex:0];
         [encoder setFragmentTexture:source atIndex:0];
@@ -265,6 +292,8 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
     NSRect frame=NSMakeRect(rect[0]*sx,host.isFlipped?rect[1]*sy:host.bounds.size.height-(rect[1]+rect[3])*sy,rect[2]*sx,rect[3]*sy);
     _view.autoresizingMask=NSViewNotSizable;
     _view->editorEnabled=YES;
+    _view.layer.masksToBounds=YES;
+    _margin.store(20.*_layer.contentsScale);
     if(!NSEqualRects(frame,_view.frame)) _view.frame=frame;
     if(!_view->selectionView) {
         _view->selectionView=[[EditorSelectionView alloc] initWithFrame:_view.bounds];
@@ -278,11 +307,28 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
         overlay->flags=flags;overlay->pixels=size;std::memcpy(overlay->selection,selected,4*sizeof(float));overlay.needsDisplay=YES;
     }
 }
+- (void)overlay:(const uint32_t *)canvas lines:(const OverlayLine *)lines count:(uint32_t)count labels:(const OverlayLabel *)labels labelCount:(uint32_t)labelCount {
+    EditorSelectionView *o=_view->selectionView;if(!o)return;
+    BOOL changed=o->canvas[0]!=canvas[0]||o->canvas[1]!=canvas[1]||o->lines.size()!=count;
+    if(!changed&&count)changed=std::memcmp(o->lines.data(),lines,count*sizeof(OverlayLine))!=0;
+    o->canvas[0]=canvas[0];o->canvas[1]=canvas[1];o->lines.assign(lines,lines+count);
+    NSMutableArray *list=[NSMutableArray array];for(uint32_t i=0;i<labelCount;++i){const auto &l=labels[i];[list addObject:@{@"x":@(l.x),@"y":@(l.y),@"text":@(l.text),@"color":[NSColor colorWithSRGBRed:l.color[0] green:l.color[1] blue:l.color[2] alpha:l.color[3]]}];}
+    if(![o->labels isEqual:list])changed=YES;o->labels=list;if(changed)o.needsDisplay=YES;
+}
+- (void)outputTitle:(NSString *)name {if(_embedded)return;NSString *title=[@"Rastera — Native clean output — " stringByAppendingString:name];for(NSString *arg in NSProcessInfo.processInfo.arguments)if([arg hasPrefix:@"--editor-probe="])title=[title stringByAppendingString:@" (automated probe)"];if(![_window.title isEqual:title])_window.title=title;}
+- (void)metrics:(float *)out {out[0]=_layer.drawableSize.width;out[1]=_layer.drawableSize.height;out[2]=_view.bounds.size.width>0?out[0]/_view.bounds.size.width:1;}
+- (int)settingsMenu {
+    NSMenu *menu=[[NSMenu alloc]initWithTitle:@"Settings"];NSMenuItem *item=[[NSMenuItem alloc]initWithTitle:@"Canvas settings…" action:@selector(canvasSettingsChosen:) keyEquivalent:@""];item.target=self;[menu addItem:item];
+    objc_setAssociatedObject(self,@selector(settingsMenu),@0,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [menu popUpMenuPositioningItem:nil atLocation:[_view convertPoint:_window.mouseLocationOutsideOfEventStream fromView:nil] inView:_view];
+    return [objc_getAssociatedObject(self,@selector(settingsMenu)) intValue];
+}
+- (void)canvasSettingsChosen:(id)sender {objc_setAssociatedObject(self,@selector(settingsMenu),@1,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
 - (void)closeOutputForProbe { NSCAssert(NSThread.isMainThread,@"Close on main");if(!_embedded)[_window performClose:nil]; }
 - (void)replay:(uint32_t)kind x:(float)x y:(float)y {
     if(!_embedded||!_view->editorEnabled)return;
-    float fit[4];const CGSize size=_layer.drawableSize;rastera_shared_fit(3840,1080,size.width,size.height,fit);
-    NSPoint local=NSMakePoint((fit[0]+x/3840*fit[2])*_view.bounds.size.width/size.width,_view.bounds.size.height-(fit[1]+y/1080*fit[3])*_view.bounds.size.height/size.height);
+    float fit[4];const CGSize size=_layer.drawableSize;uint32_t *canvas=_view->selectionView->canvas;rastera_editor_fit(canvas[0],canvas[1],size.width,size.height,_margin.load(),fit);
+    NSPoint local=NSMakePoint((fit[0]+x/canvas[0]*fit[2])*_view.bounds.size.width/size.width,_view.bounds.size.height-(fit[1]+y/canvas[1]*fit[3])*_view.bounds.size.height/size.height);
     NSPoint position=[_view convertPoint:local toView:nil];
     NSEventType type=kind==1?NSEventTypeLeftMouseDown:kind==2?NSEventTypeLeftMouseDragged:NSEventTypeLeftMouseUp;
     NSEvent *event=[NSEvent mouseEventWithType:type location:position modifierFlags:0 timestamp:CACurrentMediaTime() windowNumber:_window.windowNumber context:nil eventNumber:0 clickCount:1 pressure:0];
@@ -364,3 +410,29 @@ extern "C" void rastera_editor_replay(void *handle,uint32_t kind,float x,float y
 extern "C" void rastera_editor_close_output(void *handle) {
     if(@available(macOS 14.0,*)) [(__bridge SharedCanvasConsumer *)handle closeOutputForProbe];
 }
+
+extern "C" void rastera_editor_overlay(void *handle,const uint32_t *canvas,const OverlayLine *lines,uint32_t count,const OverlayLabel *labels,uint32_t labelCount){
+    NSCAssert(NSThread.isMainThread,@"Overlay on main");
+    if(@available(macOS 14.0,*)){SharedCanvasConsumer *c=(__bridge SharedCanvasConsumer *)handle;[c overlay:canvas lines:lines count:count labels:labels labelCount:labelCount];}
+}
+extern "C" char *rastera_font_catalog(){@autoreleasepool {
+    // Core Text discovery is called from a dedicated worker, never AppKit/view work.
+    CTFontCollectionRef collection=CTFontCollectionCreateFromAvailableFonts(NULL);
+    NSArray *descriptors=CFBridgingRelease(CTFontCollectionCreateMatchingFontDescriptors(collection));CFRelease(collection);
+    NSMutableArray *result=[NSMutableArray array];
+    for(id descriptor in descriptors){CTFontDescriptorRef d=(__bridge CTFontDescriptorRef)descriptor;
+        NSString *family=CFBridgingRelease(CTFontDescriptorCopyAttribute(d,kCTFontFamilyNameAttribute));
+        NSString *style=CFBridgingRelease(CTFontDescriptorCopyAttribute(d,kCTFontStyleNameAttribute));
+        NSString *name=CFBridgingRelease(CTFontDescriptorCopyAttribute(d,kCTFontNameAttribute));
+        NSURL *url=CFBridgingRelease(CTFontDescriptorCopyAttribute(d,kCTFontURLAttribute));
+        if(family&&name&&url.path)[result addObject:@{@"family":family,@"style":style?:@"Regular",@"postscript":name,@"path":url.path}];
+    }
+    NSData *data=[NSJSONSerialization dataWithJSONObject:result options:0 error:nil];return strdup([[NSString alloc]initWithData:data encoding:NSUTF8StringEncoding].UTF8String);
+}}
+extern "C" int rastera_settings_menu(void *handle){
+    NSCAssert(NSThread.isMainThread,@"Menu on main");
+    if(@available(macOS 14.0,*)){return [(__bridge SharedCanvasConsumer *)handle settingsMenu];}return 0;
+}
+
+extern "C" void rastera_editor_metrics(void *handle,float *out){NSCAssert(NSThread.isMainThread,@"Metrics on main");if(@available(macOS 14.0,*)){[(__bridge SharedCanvasConsumer *)handle metrics:out];}}
+extern "C" void rastera_shared_title(void *handle,const char *name){NSCAssert(NSThread.isMainThread,@"Titles on main");if(@available(macOS 14.0,*)){[(__bridge SharedCanvasConsumer *)handle outputTitle:@(name)];}}

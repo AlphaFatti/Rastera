@@ -9,6 +9,8 @@ pub(super) struct Probe {
     phase: u32,
     frame: u32,
     before: Option<Document>,
+    handle: Option<[f32; 2]>,
+    mapping: bool,
 }
 impl Probe {
     pub fn new(folder: PathBuf) -> Self {
@@ -17,6 +19,8 @@ impl Probe {
             phase: 0,
             frame: 0,
             before: None,
+            handle: None,
+            mapping: std::env::args().any(|a| a == "--mapping-probe"),
         }
     }
     fn event(preview: &Consumer, kind: u32, p: [f32; 2]) {
@@ -56,7 +60,7 @@ impl Probe {
         enabled: &mut [bool; 2],
     ) -> Result<bool, String> {
         if let Some(error) = &e.error {
-            if self.phase != 18 {
+            if self.phase != 18 && self.phase != 56 && self.phase != 57 {
                 return Err(error.clone());
             }
         }
@@ -158,7 +162,7 @@ impl Probe {
                 )?;
                 e.file_job(FileJob::Save(
                     self.folder.join("result.rastera.json"),
-                    e.doc.clone(),
+                    Box::new(e.doc.clone()),
                 ));
             }
             17 => {
@@ -202,7 +206,7 @@ impl Probe {
                 self.before = Some(e.doc.clone());
                 e.file_job(FileJob::Save(
                     self.folder.join("result.rastera.json"),
-                    e.doc.clone(),
+                    Box::new(e.doc.clone()),
                 ));
             }
             26 => e.file_job(FileJob::Load(self.folder.join("result.rastera.json"))),
@@ -238,6 +242,268 @@ impl Probe {
             31 => {
                 check(enabled[0] && enabled[1], "Right reopen failed")?;
                 log(format!("editor_probe passed=1 import_png=1 add_text=1 native_drag_resize=1 single_gesture_undo_redo=1 reorder_duplicate_delete=1 project_roundtrip=1 failed_load_preserved=1 partially_off_canvas=1 native_output_close_reopen=1 result={}\n",self.folder.join("result.rastera.json").display()));
+                if !self.mapping {
+                    return Ok(true);
+                }
+                self.before = Some(e.doc.clone());
+                let mut candidate = e.doc.clone();
+                candidate.canvas = [1079, 1919];
+                e.stage_document(candidate, None);
+            }
+            32 => {
+                check(
+                    e.doc.canvas == [1079, 1919],
+                    "Portrait allocation/commit failed",
+                )?;
+                let old = self.before.as_ref().unwrap();
+                check(
+                    e.doc.layers == old.layers && e.doc.viewports == old.viewports,
+                    "Resize moved document coordinates",
+                )?;
+                e.action(Action::Undo);
+            }
+            33 => {
+                check(
+                    e.doc == *self.before.as_ref().unwrap(),
+                    "Canvas undo failed",
+                )?;
+                e.action(Action::Redo);
+            }
+            34 => {
+                check(e.doc.canvas == [1079, 1919], "Canvas redo failed")?;
+                e.change_mode(Mode::Viewports);
+                let before = e.doc.clone();
+                e.doc.viewports[1].fit_canvas(e.doc.canvas); // Deliberately overlap the selected Left.
+                e.history.record(before, &e.doc);
+                e.publish();
+                e.viewport_selected = Some(0);
+                Self::event(p, 1, [960., 540.]);
+            }
+            35 => Self::event(p, 2, [800., 700.]),
+            36 => Self::event(p, 3, [800., 700.]),
+            37 => {
+                check(
+                    e.doc.viewports[0]
+                        .center
+                        .iter()
+                        .zip([800., 700.])
+                        .all(|(a, b)| (*a - b).abs() < 0.2),
+                    "Viewport native pan failed",
+                )?;
+                e.action(Action::Undo);
+            }
+            38 => {
+                check(
+                    e.doc.viewports[0].center == [960., 540.],
+                    "Viewport gesture undo failed",
+                )?;
+                e.action(Action::Redo);
+            }
+            39 => {
+                check(
+                    (e.doc.viewports[0].center[0] - 800.).abs() < 0.2,
+                    "Viewport gesture redo failed",
+                )?;
+                Self::event(p, 1, e.doc.viewports[0].corners()[2]);
+            }
+            40 => Self::event(p, 2, [1280., 970.]),
+            41 => Self::event(p, 3, [1280., 970.]),
+            42 => {
+                check(
+                    (e.doc.viewports[0].zoom - 2.).abs() < 0.002,
+                    "Uniform viewport corner zoom failed",
+                )?;
+                let handle = e.rotation_handle(p, 0);
+                self.handle = Some(handle);
+                Self::event(p, 1, handle);
+            }
+            43 | 44 => {
+                let c = e.doc.viewports[0].center;
+                let h = self.handle.unwrap();
+                Self::event(
+                    p,
+                    if self.phase == 43 { 2 } else { 3 },
+                    [c[0] + c[1] - h[1], c[1]],
+                );
+            }
+            45 => {
+                check(
+                    (e.doc.viewports[0].rotation - 90.).abs() < 0.05,
+                    "Viewport rotation handle failed",
+                )?;
+                let before = e.doc.clone();
+                e.doc.viewports[1].fit_canvas(e.doc.canvas);
+                check(
+                    e.doc.viewports[1].center == [539.5, 959.5]
+                        && e.doc.viewports[1].rotation == 0.,
+                    "Fit Canvas failed",
+                )?;
+                e.doc.viewports[0].name = "Detail".into();
+                e.doc.viewports[0].color = rastera_core::theme::HOT_MAGENTA;
+                e.history.record(before, &e.doc);
+                e.publish();
+                e.change_mode(Mode::Canvas);
+                e.selected = Some(4);
+                e.font_search = "Menlo".into();
+                e.font_dialog = true;
+                self.frame = 0;
+            }
+            46 => {
+                self.frame += 1;
+                if self.frame < 120 || !e.library.ready.load(Ordering::Acquire) {
+                    return Ok(false);
+                }
+                let face = e
+                    .library
+                    .faces
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|f| f.postscript == "Menlo-Bold")
+                    .cloned()
+                    .ok_or("Menlo Bold not discovered")?;
+                let font = rastera_core::fonts::FontRef {
+                    family: face.family,
+                    style: face.style,
+                    postscript: face.postscript,
+                };
+                let defs = e.library.definitions(Some(&font));
+                check(
+                    defs.font_data.contains_key("installed"),
+                    "Installed font bytes/collection face were not loaded",
+                )?;
+                log(format!(
+                    "canvas_mapping_probe installed_font={} loaded_face=1\n",
+                    font.postscript
+                ));
+                let before = e.doc.clone();
+                e.doc.texts.get_mut(&3).unwrap().font = Some(font);
+                e.history.record(before, &e.doc);
+                e.publish();
+                e.font_dialog = false;
+                e.settings = Some(e.doc.canvas);
+                self.frame = 0;
+            }
+            47 => {
+                self.frame += 1;
+                if self.frame < 120 {
+                    return Ok(false);
+                }
+                e.settings = None;
+                let mut candidate = e.doc.clone();
+                candidate.canvas = [2559, 1439];
+                e.stage_document(candidate, None);
+            }
+            48 => {
+                check(
+                    e.doc.canvas == [2559, 1439] && e.doc.viewports[0].rotation.abs() > 89.,
+                    "Landscape resize lost mapping",
+                )?;
+                self.before = Some(e.doc.clone());
+                e.file_job(FileJob::Save(
+                    self.folder.join("mapping.rastera.json"),
+                    Box::new(e.doc.clone()),
+                ));
+            }
+            49 => e.file_job(FileJob::Load(self.folder.join("mapping.rastera.json"))),
+            50 => {
+                check(
+                    e.doc == *self.before.as_ref().unwrap(),
+                    "Custom canvas/font/mapping project round trip failed",
+                )?;
+                unsafe {
+                    rastera_editor_close_output(
+                        outputs[0].as_ref().ok_or("Detail missing")?.handle.as_ptr(),
+                    );
+                }
+            }
+            51 => {
+                check(!enabled[0], "Mapped output close not observed")?;
+                enabled[0] = true;
+            }
+            52 => {
+                check(
+                    enabled[0] && e.doc == *self.before.as_ref().unwrap(),
+                    "Mapped output reopen lost settings",
+                )?;
+                let font = e.doc.texts[&3].font.clone().unwrap();
+                check(
+                    e.library.available(&font),
+                    "Selected font unexpectedly fell back",
+                )?;
+                let mut candidate = e.doc.clone();
+                candidate.texts.get_mut(&3).unwrap().font = Some(rastera_core::fonts::FontRef {
+                    family: "Unavailable test font".into(),
+                    style: "Regular".into(),
+                    postscript: "RasteraMissingTestFont".into(),
+                });
+                e.stage_document(candidate, None);
+            }
+            53 => {
+                let font = e.doc.texts[&3].font.as_ref().unwrap();
+                check(
+                    !e.library.available(font) && font.postscript == "RasteraMissingTestFont",
+                    "Missing-font identity/fallback indication failed",
+                )?;
+                e.stage_document(self.before.as_ref().unwrap().clone(), None);
+            }
+            54 => {
+                check(
+                    e.doc == *self.before.as_ref().unwrap(),
+                    "Missing-font recovery changed project",
+                )?;
+                let mut candidate = e.doc.clone();
+                candidate.canvas = [8192, 8192];
+                check(candidate.validate().is_err(), "Over-budget canvas accepted")?;
+                e.settings = Some(candidate.canvas);
+                self.frame = 0;
+            }
+            55 => {
+                self.frame += 1;
+                if self.frame < 60 {
+                    return Ok(false);
+                }
+                e.settings = None;
+                check(
+                    e.doc == *self.before.as_ref().unwrap(),
+                    "Cancel changed live document",
+                )?;
+                let mut candidate = e.doc.clone();
+                candidate.canvas = [2558, 1438];
+                candidate.images.get_mut(&1).unwrap().path = self.folder.join("absent.png");
+                e.stage_document(candidate, None);
+            }
+            56 => {
+                check(e.error.is_some(), "Failed candidate unexpectedly applied")?;
+            }
+            57 => {
+                check(
+                    e.error.is_some() && e.doc == *self.before.as_ref().unwrap(),
+                    "Failed scene preparation changed live document",
+                )?;
+                e.error = None;
+                unsafe {
+                    rastera_editor_close_output(
+                        outputs[1]
+                            .as_ref()
+                            .ok_or("Mapped Right missing")?
+                            .handle
+                            .as_ptr(),
+                    );
+                }
+            }
+            58 => {
+                check(!enabled[1], "Mapped Right close not observed")?;
+                enabled[1] = true;
+            }
+            59 => {
+                check(
+                    enabled[1] && e.doc == *self.before.as_ref().unwrap(),
+                    "Mapped Right reopen lost settings",
+                )?;
+                e.change_mode(Mode::Viewports);
+                e.viewport_selected = Some(0);
+                log(format!("canvas_mapping_probe passed=1 portrait_odd_resize=1 retained_coordinates=1 resize_undo_redo=1 viewport_native_pan_zoom_rotate=1 gesture_undo_redo=1 fit_canvas=1 installed_font_face=1 dialogs_native=1 mapping_font_roundtrip=1 mapped_output_reopen=1 missing_font_fallback=1 budget_rejection=1 cancel_preserved=1 failed_candidate_preserved=1 result={}\n",self.folder.join("mapping.rastera.json").display()));
                 return Ok(true);
             }
             _ => return Err("Unknown probe phase".into()),

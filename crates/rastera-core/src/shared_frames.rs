@@ -12,6 +12,8 @@ use std::{
 struct State<T> {
     slots: Vec<Arc<T>>,
     latest: Option<(usize, u64)>,
+    meta: crate::mapping::FrameMeta,
+    base_refs: usize,
 }
 pub struct FramePool<T> {
     state: Mutex<State<T>>,
@@ -19,6 +21,7 @@ pub struct FramePool<T> {
 pub struct FrameLease<T> {
     resource: Arc<T>,
     pub frame_id: u64,
+    pub meta: crate::mapping::FrameMeta,
 }
 impl<T> FrameLease<T> {
     /// Borrow only. Native readers must keep the lease until their GPU commands finish.
@@ -28,11 +31,13 @@ impl<T> FrameLease<T> {
 }
 impl<T> FramePool<T> {
     pub fn new(slots: Vec<T>) -> Self {
-        assert!(slots.len() >= 2);
+        assert!(slots.is_empty() || slots.len() >= 2);
         Self {
             state: Mutex::new(State {
                 slots: slots.into_iter().map(Arc::new).collect(),
                 latest: None,
+                meta: Default::default(),
+                base_refs: 1,
             }),
         }
     }
@@ -43,12 +48,21 @@ impl<T> FramePool<T> {
             .slots
             .iter()
             .enumerate()
-            .find(|(i, slot)| state.latest.map(|v| v.0) != Some(*i) && Arc::strong_count(slot) == 1)
+            .find(|(i, slot)| {
+                state.latest.map(|v| v.0) != Some(*i) && Arc::strong_count(slot) == state.base_refs
+            })
             .map(|(i, slot)| (i, slot.clone()))
     }
     /// Caller must have finished all GPU writes before publishing this reservation.
+    #[cfg(test)]
     fn publish(&self, index: usize, frame_id: u64) {
         self.state.lock().unwrap().latest = Some((index, frame_id));
+    }
+    fn replace(&self, slots: Vec<Arc<T>>, base_refs: usize) {
+        let mut s = self.state.lock().unwrap();
+        s.slots = slots;
+        s.base_refs = base_refs;
+        s.latest = None;
     }
     pub fn acquire(&self) -> Option<FrameLease<T>> {
         let state = self.state.lock().unwrap();
@@ -56,15 +70,15 @@ impl<T> FramePool<T> {
         Some(FrameLease {
             resource: state.slots[i].clone(),
             frame_id,
+            meta: state.meta.clone(),
         })
     }
     pub fn leased_slots(&self) -> usize {
-        self.state
-            .lock()
-            .unwrap()
+        let state = self.state.lock().unwrap();
+        state
             .slots
             .iter()
-            .filter(|s| Arc::strong_count(s) > 1)
+            .filter(|s| Arc::strong_count(s) > state.base_refs)
             .count()
     }
 }
@@ -93,9 +107,11 @@ impl SharedCanvasProducer {
         queue: wgpu::Queue,
         mut scene: Option<crate::composition::SceneFeed>,
     ) -> Self {
-        let pool = Arc::new(FramePool::new(
-            (0..4).map(|_| canvas_texture(&device)).collect(),
-        ));
+        let pool = Arc::new(FramePool::new(if scene.is_some() {
+            vec![]
+        } else {
+            (0..4).map(|_| canvas_texture(&device)).collect()
+        }));
         let stats = Arc::new(RenderStats::default());
         let skipped = Arc::new(AtomicU64::new(0));
         let frames = pool.clone();
@@ -108,12 +124,28 @@ impl SharedCanvasProducer {
             let period = Duration::from_nanos(1_000_000_000 / 60);
             let mut deadline = origin;
             let mut previous = None;
+            let mut pending_meta = None;
+            let mut active: Option<Arc<crate::composition::Generation>> = None;
             loop {
                 let begin = Instant::now();
                 if let Some(p) = previous {
                     progress.timings.record(0, p, begin);
                 }
                 previous = Some(begin);
+                if let Some(feed) = scene.as_mut() {
+                    if let Some((generation, meta)) = feed.begin_frame() {
+                        if active
+                            .as_ref()
+                            .is_none_or(|old| !Arc::ptr_eq(old, &generation))
+                        {
+                            frames.replace(generation.textures.clone(), 2);
+                            active = Some(generation);
+                        }
+                        // No callbacks see this metadata until publication below.
+                        // Update metadata atomically WITH publication, not before encoding.
+                        pending_meta = Some(meta);
+                    }
+                }
                 if let Some((slot, texture)) = frames.reserve() {
                     let target = texture.create_view(&Default::default());
                     let encoder = if let Some(feed) = scene.as_mut() {
@@ -139,12 +171,19 @@ impl SharedCanvasProducer {
                     let _ = device.poll(wgpu::Maintain::WaitForSubmissionIndex(submission));
                     progress.timings.record(4, start, Instant::now());
                     let frame = progress.completed.fetch_add(1, Ordering::Relaxed) + 1;
+
+                    // The reservation remains leased until after publication. Native readers
+                    // acquire under the same mutex, and only after producer GPU completion.
+                    {
+                        let mut state = frames.state.lock().unwrap();
+                        if let Some(meta) = pending_meta.take() {
+                            state.meta = meta;
+                        }
+                        state.latest = Some((slot, frame));
+                    }
                     if let Some(feed) = scene.as_ref() {
                         feed.frame_completed();
                     }
-                    // The reservation remains leased until after publication. Native readers
-                    // acquire under the same mutex, and only after producer GPU completion.
-                    frames.publish(slot, frame);
                 } else {
                     dropped.fetch_add(1, Ordering::Relaxed);
                 }
@@ -197,6 +236,56 @@ mod tests {
         drop(right);
         let (free, _) = pool.reserve().unwrap();
         assert_eq!(free, a);
+    }
+    #[test]
+    fn generation_owners_do_not_block_free_slots_or_hide_gpu_readers() {
+        let generation: Vec<_> = (0..4).map(Arc::new).collect();
+        let pool = FramePool::new(vec![]);
+        pool.replace(generation.clone(), 2);
+        let mut readers = vec![];
+        for frame in 0..4 {
+            let (i, write) = pool
+                .reserve()
+                .expect("generation-owned slot must be reusable");
+            pool.publish(i, frame);
+            drop(write);
+            readers.push(pool.acquire().unwrap());
+        }
+        assert!(pool.reserve().is_none());
+        assert_eq!(pool.leased_slots(), 4);
+        readers.remove(0);
+        let (free, _) = pool.reserve().unwrap();
+        assert_eq!(free, 0);
+        assert_eq!(readers[0].frame_id, 1);
+    }
+    #[test]
+    fn generation_switch_keeps_readers_and_metadata_together() {
+        let pool = FramePool::new(vec![10, 11, 12, 13]);
+        let (i, w) = pool.reserve().unwrap();
+        pool.publish(i, 1);
+        drop(w);
+        let old = pool.acquire().unwrap();
+        let weak = Arc::downgrade(&old.resource);
+        pool.replace(
+            vec![Arc::new(20), Arc::new(21), Arc::new(22), Arc::new(23)],
+            1,
+        );
+        assert!(pool.acquire().is_none());
+        assert_eq!(*old.resource(), 10);
+        assert!(weak.upgrade().is_some());
+        let (i, w) = pool.reserve().unwrap();
+        {
+            let mut state = pool.state.lock().unwrap();
+            state.meta.canvas = [1079, 1919];
+            state.latest = Some((i, 2));
+        }
+        drop(w);
+        let new = pool.acquire().unwrap();
+        assert_eq!(*new.resource(), 20);
+        assert_eq!(new.meta.canvas, [1079, 1919]);
+        assert_eq!(old.meta.canvas, [3840, 1080]);
+        drop(old);
+        assert!(weak.upgrade().is_none());
     }
     #[test]
     fn outstanding_gpu_leases_prevent_reuse_and_bound_work() {

@@ -1797,6 +1797,7 @@ dependencies = [
  "image",
  "serde",
  "serde_json",
+ "ttf-parser",
  "wgpu",
 ]
 
@@ -1809,6 +1810,7 @@ dependencies = [
  "pollster",
  "rastera-core",
  "raw-window-handle",
+ "serde_json",
  "wgpu",
  "winit",
 ]

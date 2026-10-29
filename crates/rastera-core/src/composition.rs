@@ -2,7 +2,6 @@
 use crate::{
     renderer::PatternGenerator,
     scene::{Alignment, Content, Document, TextObject},
-    HEIGHT, WIDTH,
 };
 use epaint::{
     text::{FontDefinitions, Fonts},
@@ -31,6 +30,12 @@ struct Prepared {
     revision: u64,
     background: bool,
     layers: Vec<Draw>,
+    generation: Arc<Generation>,
+    meta: crate::mapping::FrameMeta,
+}
+pub(crate) struct Generation {
+    pub size: [u32; 2],
+    pub textures: Vec<Arc<wgpu::Texture>>,
 }
 struct Material {
     pipeline: wgpu::RenderPipeline,
@@ -61,8 +66,31 @@ pub struct SceneFeed {
     material: Arc<Material>,
     current: Option<Arc<Prepared>>,
 }
+fn wait_error(
+    future: impl std::future::Future<Output = Option<wgpu::Error>>,
+) -> Option<wgpu::Error> {
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let mut f = std::pin::pin!(future);
+    loop {
+        match f.as_mut().poll(&mut cx) {
+            std::task::Poll::Ready(v) => return v,
+            std::task::Poll::Pending => thread::yield_now(),
+        }
+    }
+}
 impl SceneEngine {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        Self::with_fonts(
+            device,
+            queue,
+            Arc::new(crate::fonts::FontLibrary::default()),
+        )
+    }
+    pub fn with_fonts(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        library: Arc<crate::fonts::FontLibrary>,
+    ) -> Self {
         let material = Arc::new(Material::new(&device));
         let shared = Arc::new(Shared {
             request: Mutex::new(None),
@@ -78,6 +106,8 @@ impl SceneEngine {
         let worker = thread::spawn(move || {
             let fonts = Fonts::new(1., 8192, FontDefinitions::default());
             let mut cache = HashMap::new();
+            let mut generation: Option<Arc<Generation>> = None;
+            let mut generations: Vec<Vec<std::sync::Weak<wgpu::Texture>>> = vec![];
             // Keep retired snapshots until the producer releases them, so final
             // texture/bind-group destruction happens on this preparation thread.
             let mut retained: Vec<Arc<Prepared>> = vec![];
@@ -101,7 +131,74 @@ impl SceneEngine {
                 }
                 retained.retain(|s| Arc::strong_count(s) > 1);
                 let (revision, doc) = request;
-                match prepare(&device, &queue, &gpu, &fonts, &doc, &mut cache) {
+                while doc.texts.values().any(|t| t.font.is_some())
+                    && !library.ready.load(Ordering::Acquire)
+                    && !state.stop.load(Ordering::Relaxed)
+                {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                let generation_result = (|| {
+                    doc.validate()?;
+                    crate::mapping::validate_canvas(
+                        doc.canvas,
+                        device.limits().max_texture_dimension_2d,
+                    )?;
+                    if generation.as_ref().is_none_or(|g| g.size != doc.canvas) {
+                        // Do not allocate a third generation while GPU leases hold either predecessor.
+                        generation = None;
+                        loop {
+                            retained.retain(|s| Arc::strong_count(s) > 1);
+                            generations.retain(|g| g.iter().any(|t| t.strong_count() > 0));
+                            if generations.len() < 2 {
+                                break;
+                            }
+                            if state.stop.load(Ordering::Relaxed) {
+                                return Err("Resize cancelled during shutdown".to_owned());
+                            }
+                            thread::sleep(Duration::from_millis(2));
+                        }
+                        device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+                        device.push_error_scope(wgpu::ErrorFilter::Validation);
+                        let textures: Vec<_> = (0..4)
+                            .map(|_| {
+                                Arc::new(crate::renderer::canvas_texture_size(&device, doc.canvas))
+                            })
+                            .collect();
+                        let validation = wait_error(device.pop_error_scope());
+                        let memory = wait_error(device.pop_error_scope());
+                        if let Some(error) = validation.or(memory) {
+                            return Err(format!("Canvas allocation failed: {error}"));
+                        }
+                        generations.push(textures.iter().map(Arc::downgrade).collect());
+                        eprintln!("scene_generation width={} height={} textures=4 live_generations={} nominal_bytes={}",doc.canvas[0],doc.canvas[1],generations.len(),u64::from(doc.canvas[0])*u64::from(doc.canvas[1])*16);
+                        generation = Some(Arc::new(Generation {
+                            size: doc.canvas,
+                            textures,
+                        }));
+                    }
+                    Ok(generation.as_ref().unwrap().clone())
+                })();
+                let prepared = generation_result.and_then(|g| {
+                    // Capture resource preparation failures before exposing a ready scene.
+                    device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+                    device.push_error_scope(wgpu::ErrorFilter::Validation);
+                    let prepared = prepare(
+                        &device,
+                        &queue,
+                        &gpu,
+                        (&fonts, &library),
+                        &doc,
+                        &mut cache,
+                        g,
+                    );
+                    let validation = wait_error(device.pop_error_scope());
+                    let memory = wait_error(device.pop_error_scope());
+                    if let Some(error) = validation.or(memory) {
+                        return Err(format!("Scene preparation failed: {error}"));
+                    }
+                    prepared
+                });
+                match prepared {
                     Ok(mut scene) => {
                         scene.revision = revision;
                         let scene = Arc::new(scene);
@@ -166,16 +263,14 @@ impl SceneFeed {
         seconds: f32,
         pattern: &PatternGenerator,
     ) -> wgpu::CommandEncoder {
-        if let Ok(mut ready) = self.shared.ready.try_lock() {
-            if let Some(scene) = ready.take() {
-                // Show the most recent COMPLETE snapshot even if a newer document
-                // is preparing. Discarding it whenever edits outrun 60 Hz starves
-                // live dragging until mouse-up. One worker preserves revision order.
-                self.current = Some(scene);
-            }
-        }
         let mut encoder = if self.current.as_ref().is_some_and(|s| s.background) {
-            pattern.encode(device, queue, target, seconds)
+            pattern.encode_size(
+                device,
+                queue,
+                target,
+                seconds,
+                self.current.as_ref().unwrap().meta.canvas,
+            )
         } else {
             let mut encoder = device.create_command_encoder(&Default::default());
             {
@@ -219,6 +314,16 @@ impl SceneFeed {
         }
         encoder
     }
+    pub(crate) fn begin_frame(&mut self) -> Option<(Arc<Generation>, crate::mapping::FrameMeta)> {
+        if let Ok(mut ready) = self.shared.ready.try_lock() {
+            if let Some(scene) = ready.take() {
+                self.current = Some(scene);
+            }
+        }
+        self.current
+            .as_ref()
+            .map(|s| (s.generation.clone(), s.meta.clone()))
+    }
     pub(crate) fn frame_completed(&self) {
         if let Some(scene) = &self.current {
             self.shared.applied.store(scene.revision, Ordering::Relaxed);
@@ -258,19 +363,19 @@ impl Material {
                 },
             ],
         });
-        let shader=device.create_shader_module(wgpu::ShaderModuleDescriptor {label:Some("scene compositor"),source:wgpu::ShaderSource::Wgsl(format!(r#"
-struct Layer {{ rect:vec4f, properties:vec4f }}
+        let shader=device.create_shader_module(wgpu::ShaderModuleDescriptor {label:Some("scene compositor"),source:wgpu::ShaderSource::Wgsl(r#"
+struct Layer { rect:vec4f, properties:vec4f, canvas:vec4f }
 @group(0) @binding(0) var<uniform> layer:Layer;
 @group(0) @binding(1) var bitmap:texture_2d<f32>;
 @group(0) @binding(2) var filtering:sampler;
-struct Vertex {{@builtin(position) pos:vec4f,@location(0) uv:vec2f}}
-@vertex fn vs(@builtin(vertex_index) i:u32)->Vertex {{
+struct Vertex {@builtin(position) pos:vec4f,@location(0) uv:vec2f}
+@vertex fn vs(@builtin(vertex_index) i:u32)->Vertex {
     var uv=array<vec2f,6>(vec2f(0,0),vec2f(1,0),vec2f(0,1),vec2f(0,1),vec2f(1,0),vec2f(1,1));
     let p=layer.rect.xy+uv[i]*layer.rect.zw;
-    return Vertex(vec4f(p.x/{WIDTH}.0*2.0-1.0,1.0-p.y/{HEIGHT}.0*2.0,0,1),uv[i]*layer.properties.yz);
-}}
-@fragment fn fs(v:Vertex)->@location(0) vec4f {{let c=textureSample(bitmap,filtering,v.uv);return c*layer.properties.x;}}
-"#).into())});
+    return Vertex(vec4f(p.x/layer.canvas.x*2.0-1.0,1.0-p.y/layer.canvas.y*2.0,0,1),uv[i]*layer.properties.yz);
+}
+@fragment fn fs(v:Vertex)->@location(0) vec4f {let c=textureSample(bitmap,filtering,v.uv);return c*layer.properties.x;}
+"#.into())});
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[&layout],
@@ -374,10 +479,12 @@ fn prepare(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     material: &Material,
-    fonts: &Fonts,
+    text: (&Fonts, &crate::fonts::FontLibrary),
     doc: &Document,
     cache: &mut HashMap<String, Arc<GpuImage>>,
+    generation: Arc<Generation>,
 ) -> Result<Prepared, String> {
+    let (fonts, library) = text;
     doc.validate()?;
     let mut layers = vec![];
     let mut used = HashSet::new();
@@ -417,11 +524,18 @@ fn prepare(
                         .map_err(|e| format!("Cannot decode {}: {e}", a.path.display()))?
                         .to_rgba8()
                 }
-                Content::Text(id) => rasterize_text(
-                    &doc.texts[&id],
-                    [r.width.ceil() as u32, r.height.ceil() as u32],
-                    fonts,
-                )?,
+                Content::Text(id) => {
+                    let text = &doc.texts[&id];
+                    let custom = text
+                        .font
+                        .as_ref()
+                        .map(|f| Fonts::new(1., 8192, library.definitions(Some(f))));
+                    rasterize_text(
+                        text,
+                        [r.width.ceil() as u32, r.height.ceil() as u32],
+                        custom.as_ref().unwrap_or(fonts),
+                    )?
+                }
             };
             // Filter premultiplied texels to preserve transparent PNG/text edges.
             for pixel in pixels.pixels_mut() {
@@ -476,10 +590,23 @@ fn prepare(
         } else {
             [1., 1.]
         };
-        let bytes: Vec<u8> = [r.x, r.y, r.width, r.height, layer.opacity, uv[0], uv[1], 0.]
-            .iter()
-            .flat_map(|v| v.to_ne_bytes())
-            .collect();
+        let bytes: Vec<u8> = [
+            r.x,
+            r.y,
+            r.width,
+            r.height,
+            layer.opacity,
+            uv[0],
+            uv[1],
+            0.,
+            doc.canvas[0] as f32,
+            doc.canvas[1] as f32,
+            0.,
+            0.,
+        ]
+        .iter()
+        .flat_map(|v| v.to_ne_bytes())
+        .collect();
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("immutable layer transform"),
             contents: &bytes,
@@ -512,6 +639,11 @@ fn prepare(
     Ok(Prepared {
         revision: 0,
         background: doc.test_background,
+        generation,
+        meta: crate::mapping::FrameMeta {
+            canvas: doc.canvas,
+            maps: doc.viewports.clone().map(|v| v.matrix()),
+        },
         layers,
     })
 }
@@ -535,6 +667,7 @@ mod tests {
     fn text_wrap_alignment_alpha_and_box_clipping() {
         let fonts = Fonts::new(1., 8192, FontDefinitions::default());
         let mut text = TextObject {
+            font: None,
             text: "Rastera editable multiline text".into(),
             font_size: 40.,
             color: [250, 80, 20, 128],

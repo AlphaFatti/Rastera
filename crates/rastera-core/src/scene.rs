@@ -46,6 +46,8 @@ pub enum Alignment {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TextObject {
+    #[serde(default)]
+    pub font: Option<crate::fonts::FontRef>,
     pub text: String,
     pub font_size: f32,
     pub color: [u8; 4],
@@ -74,6 +76,8 @@ pub struct Layer {
 pub struct Document {
     pub version: u32,
     pub canvas: [u32; 2],
+    #[serde(default = "crate::mapping::defaults")]
+    pub viewports: [crate::mapping::Viewport; 2],
     pub next_id: Id,
     pub test_background: bool,
     pub images: BTreeMap<Id, ImageAsset>,
@@ -84,8 +88,9 @@ pub struct Document {
 impl Default for Document {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             canvas: [WIDTH, HEIGHT],
+            viewports: crate::mapping::defaults(),
             next_id: 1,
             test_background: false,
             images: BTreeMap::new(),
@@ -111,6 +116,7 @@ impl Document {
         self.texts.insert(
             source,
             TextObject {
+                font: None,
                 text: "Editable text\nLive on the canvas".into(),
                 font_size: 80.,
                 color: [255; 4],
@@ -121,16 +127,16 @@ impl Document {
             "Text".into(),
             Content::Text(source),
             Rect {
-                x: 1152.,
-                y: 270.,
-                width: 1600.,
-                height: 400.,
+                x: self.canvas[0] as f32 * 0.3,
+                y: self.canvas[1] as f32 * 0.25,
+                width: (self.canvas[0] as f32 * 5. / 12.).max(1.),
+                height: (self.canvas[1] as f32 * 10. / 27.).max(1.),
             },
             false,
         )
     }
     pub fn add_image(&mut self, asset: ImageAsset) -> Id {
-        let rect = initial_image_rect([asset.width, asset.height]);
+        let rect = initial_image_rect_on([asset.width, asset.height], self.canvas);
         let name = asset
             .path
             .file_name()
@@ -221,11 +227,14 @@ impl Document {
             .map(|l| l.id)
     }
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != 1 || self.canvas != [WIDTH, HEIGHT] {
-            return Err(
-                "Unsupported project version or canvas dimensions (expected v1, 3840 × 1080)"
-                    .into(),
-            );
+        if self.version != 2 {
+            return Err("Unsupported project version (expected v2)".into());
+        }
+        crate::mapping::validate_canvas(self.canvas, 8192)?;
+        if self.viewports.iter().any(|v| !v.validate())
+            || self.viewports[0].id == self.viewports[1].id
+        {
+            return Err("Invalid viewport identity or transform".into());
         }
         if self.layers.len() > 128 || self.images.len() > 256 || self.texts.len() > 256 {
             return Err("Project object limit exceeded".into());
@@ -249,6 +258,12 @@ impl Document {
                 || !t.font_size.is_finite()
                 || !(4.0..=512.).contains(&t.font_size)
                 || t.text.len() > 16384
+                || t.font.as_ref().is_some_and(|f| {
+                    f.postscript.is_empty()
+                        || f.postscript.len() > 256
+                        || f.family.len() > 256
+                        || f.style.len() > 256
+                })
             {
                 return Err("Invalid text object (font 4–512 px, text ≤16384 bytes)".into());
             }
@@ -300,14 +315,17 @@ impl Document {
     }
 }
 pub fn initial_image_rect(size: [u32; 2]) -> Rect {
-    let scale = (WIDTH as f32 / size[0] as f32)
-        .min(HEIGHT as f32 / size[1] as f32)
+    initial_image_rect_on(size, [WIDTH, HEIGHT])
+}
+pub fn initial_image_rect_on(size: [u32; 2], canvas: [u32; 2]) -> Rect {
+    let scale = (canvas[0] as f32 / size[0] as f32)
+        .min(canvas[1] as f32 / size[1] as f32)
         .min(1.);
     let w = size[0] as f32 * scale;
     let h = size[1] as f32 * scale;
     Rect {
-        x: (WIDTH as f32 - w) / 2.,
-        y: (HEIGHT as f32 - h) / 2.,
+        x: (canvas[0] as f32 - w) / 2.,
+        y: (canvas[1] as f32 - h) / 2.,
         width: w,
         height: h,
     }
@@ -316,12 +334,23 @@ pub fn initial_image_rect(size: [u32; 2]) -> Rect {
 #[derive(Clone, Copy, Debug)]
 pub struct PreviewMap {
     pub fit: [f32; 4],
+    pub canvas: [u32; 2],
 }
 impl PreviewMap {
     pub fn new(size: [f32; 2]) -> Self {
-        Self {
-            fit: fit([WIDTH, HEIGHT], size),
-        }
+        Self::for_canvas([WIDTH, HEIGHT], size, 0.)
+    }
+    pub fn for_canvas(canvas: [u32; 2], size: [f32; 2], margin: f32) -> Self {
+        let mut f = fit(
+            canvas,
+            [
+                (size[0] - 2. * margin).max(0.),
+                (size[1] - 2. * margin).max(0.),
+            ],
+        );
+        f[0] += margin;
+        f[1] += margin;
+        Self { fit: f, canvas }
     }
     pub fn canvas(self, p: [f32; 2], allow_outside: bool) -> Option<[f32; 2]> {
         let [x, y, w, h] = self.fit;
@@ -332,8 +361,8 @@ impl PreviewMap {
             return None;
         }
         Some([
-            (p[0] - x) / w * WIDTH as f32,
-            (p[1] - y) / h * HEIGHT as f32,
+            (p[0] - x) / w * self.canvas[0] as f32,
+            (p[1] - y) / h * self.canvas[1] as f32,
         ])
     }
     pub fn handle(self, rect: Rect, p: [f32; 2], radius: f32) -> Option<usize> {
@@ -383,7 +412,7 @@ pub fn resize_drag(
         aspect,
     )
 }
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct History {
     undo: Vec<Document>,
     redo: Vec<Document>,
@@ -498,8 +527,20 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
         return Err("Project exceeds 8 MiB".into());
     }
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    let mut doc: Document =
+    let mut value: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|e| format!("Invalid project: {e}"))?;
+    match value.get("version").and_then(|v| v.as_u64()) {
+        Some(1) => {
+            if value.get("canvas") != Some(&serde_json::json!([3840, 1080])) {
+                return Err("Version 1 requires original canvas dimensions".into());
+            }
+            value["version"] = 2.into();
+            value["viewports"] = serde_json::to_value(crate::mapping::defaults()).unwrap();
+        }
+        Some(2) => {}
+        _ => return Err("Unsupported project schema version".into()),
+    }
+    let mut doc: Document = serde_json::from_value(value).map_err(|e| e.to_string())?;
     doc.validate()?;
     let base = path
         .parent()
@@ -713,6 +754,82 @@ mod tests {
         std::fs::remove_dir_all(base).unwrap();
     }
     #[test]
+    fn custom_canvas_initial_placement_and_retina_margin_mapping() {
+        for canvas in [[1079, 1919], [2559, 1439], [1, 1]] {
+            let mut doc = Document {
+                canvas,
+                ..Document::default()
+            };
+            let image = doc.add_image(ImageAsset {
+                path: "test.png".into(),
+                width: 1200,
+                height: 600,
+            });
+            let r = doc.layer(image).unwrap().rect;
+            assert!(r.width <= canvas[0] as f32 && r.height <= canvas[1] as f32);
+            assert!((r.x + r.width / 2. - canvas[0] as f32 / 2.).abs() < 0.001);
+            doc.add_text();
+            assert!(doc.validate().is_ok());
+            let a = PreviewMap::for_canvas(canvas, [1000., 600.], 20.);
+            let b = PreviewMap::for_canvas(canvas, [2000., 1200.], 40.);
+            for k in 0..4 {
+                assert!((2. * a.fit[k] - b.fit[k]).abs() < 0.001);
+            }
+            assert!(a.canvas([a.fit[0] - 1., a.fit[1]], false).is_none());
+            let p = a
+                .canvas([a.fit[0] + a.fit[2] / 2., a.fit[1] + a.fit[3] / 2.], false)
+                .unwrap();
+            assert!((p[0] - canvas[0] as f32 / 2.).abs() < 0.001);
+        }
+    }
+    #[test]
+    fn schema_migration_custom_dimensions_and_history() {
+        let dir = std::env::temp_dir().join(format!("rastera-migrate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("show.json");
+        let mut original = Document::default();
+        let id = original.add_text();
+        let mut legacy = serde_json::to_value(&original).unwrap();
+        legacy["version"] = 1.into();
+        legacy.as_object_mut().unwrap().remove("viewports");
+        for t in legacy["texts"].as_object_mut().unwrap().values_mut() {
+            t.as_object_mut().unwrap().remove("font");
+        }
+        std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let migrated = load_project(&path).unwrap();
+        assert_eq!(migrated, original);
+        let rect = original.layer(id).unwrap().rect;
+        let mut history = History::default();
+        let before = original.clone();
+        original.canvas = [1079, 1919];
+        original.viewports[1].center = [800., 1234.];
+        original.viewports[1].zoom = 2.5;
+        original.viewports[1].rotation = 73.;
+        original.viewports[1].name = "Portrait detail".into();
+        original.viewports[1].color = [255, 0, 128, 255];
+        let Content::Text(source) = original.layer(id).unwrap().content else {
+            panic!()
+        };
+        original.texts.get_mut(&source).unwrap().font = Some(crate::fonts::FontRef {
+            family: "Unavailable".into(),
+            style: "Bold".into(),
+            postscript: "Definitely-Missing-XYZ".into(),
+        });
+        history.record(before.clone(), &original);
+        save_project(&original, &path).unwrap();
+        assert_eq!(load_project(&path).unwrap(), original);
+        assert_eq!(original.layer(id).unwrap().rect, rect);
+        assert!(history.undo(&mut original));
+        assert_eq!(original, before);
+        assert!(history.redo(&mut original));
+        assert_eq!(original.canvas, [1079, 1919]);
+        assert_eq!(original.viewports[1].rotation, 73.);
+        let map = PreviewMap::for_canvas([1079, 1919], [2000., 1000.], 40.);
+        assert!(map.fit[0] >= 40. && map.fit[1] >= 40.);
+        assert_eq!(map.canvas([1000., 500.], false), Some([539.5, 959.5]));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn project_roundtrip_relative_media_and_validation_failures() {
         let base = std::env::temp_dir().join(format!("rastera-roundtrip-{}", std::process::id()));
         std::fs::create_dir_all(base.join("projects")).unwrap();
@@ -731,7 +848,7 @@ mod tests {
         assert!(saved.contains("../alpha.png"));
         assert_eq!(load_project(&path).unwrap(), doc);
         let bad = base.join("bad.json");
-        std::fs::write(&bad, saved.replace("\"version\": 1", "\"version\": 99")).unwrap();
+        std::fs::write(&bad, saved.replace("\"version\": 2", "\"version\": 99")).unwrap();
         assert!(load_project(&bad).is_err());
         std::fs::remove_file(&media).unwrap();
         assert!(load_project(&path).unwrap_err().contains("alpha.png"));

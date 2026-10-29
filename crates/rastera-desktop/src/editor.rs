@@ -1,8 +1,11 @@
 //! Desktop Live Edit interaction. Document/rendering live in rastera-core.
+#[path = "editor_mapping.rs"]
+mod mapping;
 #[path = "editor_probe.rs"]
 mod probe;
 use super::{log, Consumer};
 use eframe::egui;
+use mapping::Mode;
 use rastera_core::{
     composition::SceneEngine,
     scene::{self, Alignment, Content, Document, History, Id, PreviewMap, Rect},
@@ -54,7 +57,7 @@ fn dialog(kind: i32) -> Option<PathBuf> {
 enum FileJob {
     Import(PathBuf),
     Load(PathBuf),
-    Save(PathBuf, Document),
+    Save(PathBuf, Box<Document>),
 }
 enum FileResult {
     Imported(scene::ImageAsset),
@@ -88,7 +91,7 @@ impl Files {
                         scene::load_project(&path).map(|doc| FileResult::Loaded(path, doc))
                     }
                     FileJob::Save(path, doc) => {
-                        scene::save_project(&doc, &path).map(|()| FileResult::Saved(path, doc))
+                        scene::save_project(&doc, &path).map(|()| FileResult::Saved(path, *doc))
                     }
                 };
                 let _ = responses.try_send(result);
@@ -147,14 +150,40 @@ pub(super) struct Editor {
     saved: Option<Document>,
     error: Option<String>,
     probe: Option<probe::Probe>,
+    library: Arc<rastera_core::fonts::FontLibrary>,
+    mode: Mode,
+    viewport_selected: Option<usize>,
+    view_gesture: Option<mapping::ViewGesture>,
+    settings: Option<[u32; 2]>,
+    settings_requested: bool,
+    font_dialog: bool,
+    font_search: String,
+    device_limit: u32,
+    pending_before: Option<Document>,
+    pending_history: Option<History>,
+    pending_ready: bool,
 }
 impl Editor {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
-        let engine = SceneEngine::new(device, queue);
+        let device_limit = device.limits().max_texture_dimension_2d;
+        let library = mapping::library();
+        let engine = SceneEngine::with_fonts(device, queue, library.clone());
         let doc = Document::default();
         let revision = engine.submit(doc.clone());
         let mut editor = Self {
             engine,
+            library,
+            mode: Mode::Canvas,
+            viewport_selected: Some(0),
+            view_gesture: None,
+            settings: None,
+            settings_requested: false,
+            font_dialog: false,
+            font_search: String::new(),
+            device_limit,
+            pending_before: None,
+            pending_history: None,
+            pending_ready: false,
             doc,
             selected: None,
             history: History::default(),
@@ -178,6 +207,13 @@ impl Editor {
             editor.file_job(FileJob::Load(path));
         }
         editor
+    }
+    fn stage_document(&mut self, doc: Document, path: Option<PathBuf>) {
+        self.pending_before = Some(self.doc.clone());
+        self.pending_ready = false;
+        let revision = self.engine.submit(doc.clone());
+        self.revision = revision;
+        self.pending_load = Some((revision, path.unwrap_or_default(), doc));
     }
     fn file_job(&mut self, job: FileJob) {
         match self.files.tx.try_send(job) {
@@ -216,9 +252,7 @@ impl Editor {
                     self.publish();
                 }
                 Ok(FileResult::Loaded(path, doc)) => {
-                    let revision = self.engine.submit(doc.clone());
-                    self.revision = revision;
-                    self.pending_load = Some((revision, path, doc));
+                    self.stage_document(doc, Some(path));
                 }
                 Ok(FileResult::Saved(path, doc)) => {
                     log(format!("editor_saved path={}\n", path.display()));
@@ -233,29 +267,39 @@ impl Editor {
                     Err(e) => {
                         self.error = Some(e);
                         if self.pending_load.take().is_some() {
+                            self.pending_before = None;
+                            self.pending_history = None;
+                            self.pending_ready = false;
                             self.publish();
                         }
                     }
                     Ok(()) => {
-                        if let Some((revision, path, doc)) = self.pending_load.take() {
-                            if revision == status.revision {
-                                self.doc = doc;
-                                self.selected = None;
-                                self.history = History::default();
-                                self.inspector_before = None;
-                                self.gesture = None;
-                                self.saved = Some(self.doc.clone());
-                                self.project = Some(path.clone());
-                                log(format!(
-                                    "editor_loaded path={} prepared_revision={}\n",
-                                    path.display(),
-                                    revision
-                                ));
-                            }
-                        }
+                        self.pending_ready = true;
                     }
                 }
             }
+        }
+        if self.pending_ready
+            && self
+                .pending_load
+                .as_ref()
+                .is_some_and(|(r, _, _)| self.engine.applied() >= *r)
+        {
+            let (_, path, doc) = self.pending_load.take().unwrap();
+            let before = self.pending_before.take().unwrap();
+            self.doc = doc;
+            if !path.as_os_str().is_empty() {
+                self.selected = None;
+                self.history = History::default();
+                self.saved = Some(self.doc.clone());
+                self.project = Some(path.clone());
+                log(format!("editor_loaded path={}\n", path.display()));
+            } else if let Some(history) = self.pending_history.take() {
+                self.history = history;
+            } else {
+                self.history.record(before, &self.doc);
+            }
+            self.pending_ready = false;
         }
         if self.selected.is_some_and(|id| self.doc.layer(id).is_none()) {
             self.selected = None;
@@ -263,8 +307,10 @@ impl Editor {
     }
     fn action(&mut self, action: Action) {
         self.finish_gesture();
+        self.finish_view_gesture();
         self.finish_inspector();
         let before = self.doc.clone();
+        let old_history = self.history.clone();
         match action {
             Action::Import => {
                 if let Some(path) = dialog(0) {
@@ -283,18 +329,36 @@ impl Editor {
                     self.project.clone().or_else(|| dialog(2))
                 };
                 if let Some(path) = path {
-                    self.file_job(FileJob::Save(path, self.doc.clone()));
+                    self.file_job(FileJob::Save(path, Box::new(self.doc.clone())));
                 }
             }
             Action::Undo => {
                 if self.history.undo(&mut self.doc) {
-                    self.publish();
+                    if self.doc.canvas != before.canvas {
+                        let candidate = self.doc.clone();
+                        let next = self.history.clone();
+                        self.doc = before.clone();
+                        self.history = old_history;
+                        self.stage_document(candidate, None);
+                        self.pending_history = Some(next);
+                    } else {
+                        self.publish();
+                    }
                 }
                 return;
             }
             Action::Redo => {
                 if self.history.redo(&mut self.doc) {
-                    self.publish();
+                    if self.doc.canvas != before.canvas {
+                        let candidate = self.doc.clone();
+                        let next = self.history.clone();
+                        self.doc = before.clone();
+                        self.history = old_history;
+                        self.stage_document(candidate, None);
+                        self.pending_history = Some(next);
+                    } else {
+                        self.publish();
+                    }
                 }
                 return;
             }
@@ -362,13 +426,21 @@ impl Editor {
             if !unsafe { rastera_editor_pointer(preview.handle.as_ptr(), &mut event) } {
                 break;
             }
-            if self.pending_load.is_some() {
+            if self.pending_load.is_some() || self.settings.is_some() || self.font_dialog {
                 continue;
             }
-            let map = PreviewMap::new([event.width, event.height]);
+            let map = PreviewMap::for_canvas(
+                self.doc.canvas,
+                [event.width, event.height],
+                20. * event.scale,
+            );
             let Some(p) = map.canvas([event.x, event.y], true) else {
                 continue;
             };
+            if self.mode == Mode::Viewports {
+                self.view_pointer(&event, map, p);
+                continue;
+            }
             match event.kind {
                 1 => {
                     self.finish_gesture();
@@ -383,8 +455,12 @@ impl Editor {
                         .and_then(|id| self.doc.layer(id))
                         .filter(|l| !l.locked && l.visible)
                         .and_then(|l| {
-                            map.handle(l.rect, p, 8. * event.scale * 3840. / map.fit[2])
-                                .map(|corner| (l.id, corner))
+                            map.handle(
+                                l.rect,
+                                p,
+                                8. * event.scale * self.doc.canvas[0] as f32 / map.fit[2],
+                            )
+                            .map(|corner| (l.id, corner))
                         });
                     let (id, corner) = if let Some((id, corner)) = handle {
                         (Some(id), Some(corner))
@@ -470,14 +546,31 @@ impl Editor {
                 flags,
             );
         }
+        self.overlays(preview);
     }
     pub fn ui(&mut self, ctx: &egui::Context, outputs: &mut [bool; 2]) -> egui::Rect {
         self.poll();
+        mapping::apply_theme(ctx);
         let mut action = None;
-        let loading = self.busy_file || self.pending_load.is_some();
+        let loading = self.busy_file
+            || self.pending_load.is_some()
+            || self.settings.is_some()
+            || self.font_dialog;
         egui::TopBottomPanel::top("editor_toolbar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.strong("Live Edit — changes affect outputs");
+                if ui
+                    .add_enabled(!loading, egui::Button::new("Settings ▾"))
+                    .clicked()
+                {
+                    self.settings_requested = true;
+                }
+                let mut mode = self.mode;
+                ui.add_enabled_ui(!loading, |ui| {
+                    ui.selectable_value(&mut mode, Mode::Canvas, "Canvas");
+                    ui.selectable_value(&mut mode, Mode::Viewports, "Viewports");
+                });
+                self.change_mode(mode);
                 ui.add_enabled_ui(!loading, |ui| {
                     for (label, a) in [
                         ("Import image…", Action::Import),
@@ -495,8 +588,14 @@ impl Editor {
                 });
             });
             ui.horizontal(|ui| {
-                ui.checkbox(&mut outputs[0], "Left output");
-                ui.checkbox(&mut outputs[1], "Right output");
+                for (i, enabled) in outputs.iter_mut().enumerate() {
+                    let v = &self.doc.viewports[i];
+                    ui.colored_label(
+                        egui::Color32::from_rgb(v.color[0], v.color[1], v.color[2]),
+                        "■",
+                    );
+                    ui.checkbox(enabled, format!("{} output", v.name));
+                }
                 let mut test = self.doc.test_background;
                 if ui
                     .add_enabled(
@@ -527,87 +626,90 @@ impl Editor {
             self.action(a);
         }
         egui::TopBottomPanel::bottom("editor_status").show(ctx,|ui|{
-            if let Some(error)=self.error.clone(){ui.horizontal_wrapped(|ui|{ui.colored_label(egui::Color32::LIGHT_RED,error);if ui.small_button("Dismiss").clicked(){self.error=None;}});}
-            ui.label(if loading{"Loading / saving — outputs keep the last ready composition"}else if self.engine.applied()!=self.revision{"Preparing changes — outputs keep the last ready composition"}else{"Live • 3840 × 1080 • drag to move / corner handles resize • Cmd+D duplicate • Delete • Cmd+Z / Shift+Cmd+Z"});
+            if let Some(error)=self.error.clone(){ui.horizontal_wrapped(|ui|{ui.colored_label(egui::Color32::from_rgb(rastera_core::theme::HOT_MAGENTA[0],rastera_core::theme::HOT_MAGENTA[1],rastera_core::theme::HOT_MAGENTA[2]),error);if ui.small_button("Dismiss").clicked(){self.error=None;}});}
+            ui.label(if loading{"Loading / saving — outputs keep the last ready composition"}else if self.engine.applied()!=self.revision{"Preparing changes — outputs keep the last ready composition"}else{"Live • canvas pixels • drag to move / corner handles resize • Cmd+D duplicate • Delete • Cmd+Z / Shift+Cmd+Z"});
         });
-        egui::SidePanel::left("editor_layers")
-            .default_width(210.)
-            .width_range(170.0..=350.)
-            .show(ctx, |ui| {
-                ui.heading("Layers");
-                ui.label("Topmost first");
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    let rows: Vec<_> = self
-                        .doc
-                        .layers
-                        .iter()
-                        .rev()
-                        .map(|l| (l.id, l.name.clone(), l.visible, l.locked))
-                        .collect();
-                    ui.add_enabled_ui(!loading, |ui| {
-                        for (id, name, visible, locked) in rows {
-                            ui.push_id(id, |ui| {
-                                ui.horizontal(|ui| {
-                                    if ui
-                                        .small_button(if visible { "●" } else { "○" })
-                                        .on_hover_text("Show / hide")
-                                        .clicked()
-                                    {
-                                        action = Some(Action::Visible(id));
-                                    }
-                                    if ui
-                                        .small_button(if locked { "🔒" } else { "🔓" })
-                                        .on_hover_text("Lock / unlock")
-                                        .clicked()
-                                    {
-                                        action = Some(Action::Lock(id));
-                                    }
-                                    if ui
-                                        .selectable_label(self.selected == Some(id), name)
-                                        .clicked()
-                                    {
-                                        self.finish_gesture();
-                                        self.finish_inspector();
-                                        self.selected = Some(id);
-                                    }
+        if self.mode == Mode::Viewports {
+            self.viewport_panel(ctx);
+        } else {
+            egui::SidePanel::left("editor_layers")
+                .default_width(210.)
+                .width_range(170.0..=350.)
+                .show(ctx, |ui| {
+                    ui.heading("Layers");
+                    ui.label("Topmost first");
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        let rows: Vec<_> = self
+                            .doc
+                            .layers
+                            .iter()
+                            .rev()
+                            .map(|l| (l.id, l.name.clone(), l.visible, l.locked))
+                            .collect();
+                        ui.add_enabled_ui(!loading, |ui| {
+                            for (id, name, visible, locked) in rows {
+                                ui.push_id(id, |ui| {
+                                    ui.horizontal(|ui| {
+                                        if ui
+                                            .small_button(if visible { "●" } else { "○" })
+                                            .on_hover_text("Show / hide")
+                                            .clicked()
+                                        {
+                                            action = Some(Action::Visible(id));
+                                        }
+                                        if ui
+                                            .small_button(if locked { "🔒" } else { "🔓" })
+                                            .on_hover_text("Lock / unlock")
+                                            .clicked()
+                                        {
+                                            action = Some(Action::Lock(id));
+                                        }
+                                        if ui
+                                            .selectable_label(self.selected == Some(id), name)
+                                            .clicked()
+                                        {
+                                            self.finish_gesture();
+                                            self.finish_inspector();
+                                            self.selected = Some(id);
+                                        }
+                                    });
                                 });
-                            });
-                        }
+                            }
+                        });
                     });
+                    ui.separator();
+                    ui.add_enabled_ui(
+                        !loading
+                            && self
+                                .selected
+                                .and_then(|id| self.doc.layer(id))
+                                .is_some_and(|l| !l.locked),
+                        |ui| {
+                            ui.horizontal(|ui| {
+                                if ui.button("Up").clicked() {
+                                    action = Some(Action::Up);
+                                }
+                                if ui.button("Down").clicked() {
+                                    action = Some(Action::Down);
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                if ui.button("Duplicate").clicked() {
+                                    action = Some(Action::Duplicate);
+                                }
+                                if ui.button("Delete").clicked() {
+                                    action = Some(Action::Delete);
+                                }
+                            });
+                        },
+                    );
                 });
-                ui.separator();
-                ui.add_enabled_ui(
-                    !loading
-                        && self
-                            .selected
-                            .and_then(|id| self.doc.layer(id))
-                            .is_some_and(|l| !l.locked),
-                    |ui| {
-                        ui.horizontal(|ui| {
-                            if ui.button("Up").clicked() {
-                                action = Some(Action::Up);
-                            }
-                            if ui.button("Down").clicked() {
-                                action = Some(Action::Down);
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            if ui.button("Duplicate").clicked() {
-                                action = Some(Action::Duplicate);
-                            }
-                            if ui.button("Delete").clicked() {
-                                action = Some(Action::Delete);
-                            }
-                        });
-                    },
-                );
-            });
-        if let Some(a) = action.take() {
-            self.action(a);
-        }
-        let before = self.doc.clone();
-        let mut ended = false;
-        egui::SidePanel::right("editor_inspector")
+            if let Some(a) = action.take() {
+                self.action(a);
+            }
+            let before = self.doc.clone();
+            let mut ended = false;
+            egui::SidePanel::right("editor_inspector")
             .default_width(280.)
             .width_range(240.0..=420.)
             .show(ctx, |ui| {
@@ -693,6 +795,8 @@ impl Editor {
                             ui.add_enabled_ui(!loading && !locked, |ui| {
                                 ui.separator();
                                 ui.label("Editable text");
+                                if ui.button("Choose font family / face…").clicked(){self.font_dialog=true;}
+                                if let Some(font)=&text.font{ui.label(format!("{} — {}",font.family,font.style));if self.library.ready.load(Ordering::Acquire)&&!self.library.available(font){ui.colored_label(egui::Color32::from_rgb(rastera_core::theme::ELECTRIC_YELLOW[0],rastera_core::theme::ELECTRIC_YELLOW[1],rastera_core::theme::ELECTRIC_YELLOW[2]),"Missing/unusable font — bundled Ubuntu fallback; reference retained");}}else{ui.label("Bundled Ubuntu Light");}
                                 let r = ui.add(
                                     egui::TextEdit::multiline(&mut text.text)
                                         .desired_rows(6)
@@ -733,21 +837,32 @@ impl Editor {
                     });
                 });
             });
-        if self.doc != before {
-            if self.inspector_before.is_none() {
-                self.inspector_before = Some(before);
+            if self.doc != before {
+                if self.inspector_before.is_none() {
+                    self.inspector_before = Some(before);
+                }
+                self.publish();
             }
-            self.publish();
-        }
-        if ended {
-            self.finish_inspector();
+            if ended {
+                self.finish_inspector();
+            }
         }
         let area = egui::CentralPanel::default()
             .show(ctx, |ui| {
-                ui.label("Canvas preview • canvas pixels • selection is operator-only");
+                ui.label(format!(
+                    "{} × {} canvas pixels • {} • overlays are operator-only",
+                    self.doc.canvas[0],
+                    self.doc.canvas[1],
+                    if self.mode == Mode::Canvas {
+                        "Canvas"
+                    } else {
+                        "Viewports"
+                    }
+                ));
                 ui.available_rect_before_wrap()
             })
             .inner;
+        self.dialog_ui(ctx);
         // Evaluate AFTER text widgets process this frame's focus/keyboard input.
         if !ctx.wants_keyboard_input() && !loading {
             let redo = egui::Modifiers {
@@ -759,11 +874,15 @@ impl Editor {
             } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z)) {
                 self.action(Action::Undo);
             }
-            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::D)) {
+            if self.mode == Mode::Canvas
+                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::D))
+            {
                 self.action(Action::Duplicate);
             }
-            if ctx
-                .input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
+            if self.mode == Mode::Canvas
+                && ctx.input(|i| {
+                    i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)
+                })
             {
                 self.action(Action::Delete);
             }

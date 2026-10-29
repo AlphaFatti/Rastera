@@ -10,3 +10,4 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "1.0"
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
 epaint = { version = "=0.31.1", features = ["default_fonts"] }
+ttf-parser = "=0.25.1"

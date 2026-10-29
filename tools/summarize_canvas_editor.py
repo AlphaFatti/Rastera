@@ -58,7 +58,9 @@ def summarize(folder, images=False):
         def detect(row):
             raw = subprocess.check_output(['ffmpeg','-v','error','-i',str(folder/row['file']),'-vf','scale=320:175','-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'])
             xs = [(i//3) % 320 for i in range(20*320*3,len(raw),3) if raw[i]>200 and raw[i+1]>200 and raw[i+2]<140]
-            return dict(**row, marker_x=round(sum(xs)/len(xs),4) if xs else None)
+            ys = [(i//3) // 320 for i in range(20*320*3,len(raw),3) if raw[i]>200 and raw[i+1]>200 and raw[i+2]<140]
+            return dict(**row, marker_x=round(sum(xs)/len(xs),4) if xs else None,
+                marker_y=round(sum(ys)/len(ys),4) if ys else None)
         with ThreadPoolExecutor(max_workers=2) as pool:
             samples = list(pool.map(detect, captures))
         result['images'] = dict(samples=samples, groups={})
@@ -67,7 +69,7 @@ def summarize(folder, images=False):
                 group = [r for r in samples if r['file'].startswith(case+'-') and r['file'].endswith('-'+role+'.png')]
                 if not group:
                     continue
-                repeated = [dict(first=a['file'],last=b['file'],first_start=a['start_host_s'],first_end=a['end_host_s'],last_start=b['start_host_s'],last_end=b['end_host_s']) for a,b in zip(group,group[1:]) if a['marker_x'] is not None and a['marker_x'] == b['marker_x']]
+                repeated = [dict(first=a['file'],last=b['file'],first_start=a['start_host_s'],first_end=a['end_host_s'],last_start=b['start_host_s'],last_end=b['end_host_s']) for a,b in zip(group,group[1:]) if a['marker_x'] is not None and (a['marker_x'],a['marker_y']) == (b['marker_x'],b['marker_y'])]
                 result['images']['groups'][case+'-'+role] = dict(count=len(group),missing_marker=sum(r['marker_x'] is None for r in group),repeated_pairs=repeated,max_request_spacing_ms=ms(max_gap([r['start_host_s'] for r in group])))
     return result
 

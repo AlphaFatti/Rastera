@@ -98,3 +98,8 @@ mod tests {
 
 pub mod composition;
 pub mod scene;
+
+pub mod fonts;
+pub mod mapping;
+
+pub mod theme;

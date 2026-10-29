@@ -23,7 +23,11 @@ struct NativeFrame {
     texture: *mut c_void,
     lease: *mut c_void,
     frame: u64,
+    width: u32,
+    height: u32,
+    maps: [[f32; 8]; 2],
 }
+const _: [(); 96] = [(); std::mem::size_of::<NativeFrame>()];
 unsafe extern "C" {
     fn rastera_shared_create(
         source: *mut c_void,
@@ -34,6 +38,7 @@ unsafe extern "C" {
     fn rastera_shared_destroy(handle: *mut c_void);
     fn rastera_shared_is_open(handle: *mut c_void) -> bool;
     fn rastera_shared_report();
+    fn rastera_shared_title(handle: *mut c_void, name: *const c_char);
     fn rastera_shared_host_time() -> f64;
     fn rastera_shared_log(line: *const c_char);
 }
@@ -68,6 +73,7 @@ unsafe extern "C" fn rastera_shared_acquire(source: *mut c_void, out: *mut Nativ
         return false;
     };
     let frame = lease.frame_id;
+    let meta = lease.meta.clone();
     let lease = Box::into_raw(Box::new(lease)).cast();
     // SAFETY: native caller passes a valid out pointer, and must release once.
     unsafe {
@@ -75,6 +81,9 @@ unsafe extern "C" fn rastera_shared_acquire(source: *mut c_void, out: *mut Nativ
             texture,
             lease,
             frame,
+            width: meta.canvas[0],
+            height: meta.canvas[1],
+            maps: meta.maps,
         });
     }
     true
@@ -93,6 +102,27 @@ unsafe extern "C" fn rastera_shared_fit(w: u32, h: u32, dw: f32, dh: f32, out: *
     // SAFETY: native mapping struct supplies four writable floats.
     unsafe {
         std::ptr::copy_nonoverlapping(fit.as_ptr(), out, 4);
+    }
+}
+#[unsafe(no_mangle)]
+unsafe extern "C" fn rastera_editor_fit(
+    w: u32,
+    h: u32,
+    dw: f32,
+    dh: f32,
+    margin: f32,
+    out: *mut f32,
+) {
+    let fit = rastera_core::scene::PreviewMap::for_canvas([w, h], [dw, dh], margin).fit;
+    unsafe {
+        std::ptr::copy_nonoverlapping(fit.as_ptr(), out, 4);
+    }
+}
+#[unsafe(no_mangle)]
+unsafe extern "C" fn rastera_theme_workspace(out: *mut f32) {
+    let c = rastera_core::theme::floats(rastera_core::theme::WORKSPACE);
+    unsafe {
+        std::ptr::copy_nonoverlapping(c.as_ptr(), out, 4);
     }
 }
 struct Consumer {
@@ -179,6 +209,9 @@ impl eframe::App for App {
             let area = editor.ui(ctx, &mut enabled);
             if let Some(preview) = &self.preview {
                 editor.native_layout(preview, ctx, area);
+                if editor.settings_requested() {
+                    editor.settings_menu(preview);
+                }
                 editor.probe_tick(preview, &self.outputs, &mut enabled);
             }
             let pool = &self.producer.as_ref().unwrap().pool;
@@ -197,6 +230,15 @@ impl eframe::App for App {
                     ) {
                         Ok(c) => self.outputs[i] = Some(c),
                         Err(e) => log(format!("shared_error open_output={i} message={e}\n")),
+                    }
+                }
+            }
+            for (i, out) in self.outputs.iter().enumerate() {
+                if let Some(out) = out {
+                    let name =
+                        CString::new(editor.doc.viewports[i].name.replace('\0', "")).unwrap();
+                    unsafe {
+                        rastera_shared_title(out.handle.as_ptr(), name.as_ptr());
                     }
                 }
             }
