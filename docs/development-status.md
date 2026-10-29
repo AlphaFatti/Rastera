@@ -6,6 +6,10 @@ This WIP checkpoint does not signify milestone acceptance. Individual native tra
 
 Status recorded October 29, 2026. This is an engineering prototype, not a production live-show application. The architecture blueprint remains the long-term direction.
 
+## v0.0.1 development preview checkpoint
+
+The user reports that fullscreen works successfully. This is a human report of successful fullscreen operation, not blanket acceptance of every display/transition case. Version metadata is aligned to 0.0.1. The specifically unverified hardware/Spaces cases and known operator-pause/capture limitations below remain. See [changelog](../CHANGELOG.md).
+
 ## Assigned-display fullscreen outputs
 
 `feature/display-outputs` builds on `e05ea35775d9b71482393d184d80bad4971961b2`. Each stable viewport ID has separate Windowed/Fullscreen, target display and Enable controls. UUID discovery, timed Identify labels, conflict/missing/error status, native borderless placement, application-scoped ⌘⇧Esc recovery and machine/project/path-scoped local preferences are implemented. Portable schema 4 adds a random document identity with explicit v1/v2/v3 migration. Opening a project disables outputs before its candidate scene can publish; saved fullscreen outputs never auto-enable. One producer, bounded texture generations and completion-held leases remain. [Current guide and results](display-outputs.md).
