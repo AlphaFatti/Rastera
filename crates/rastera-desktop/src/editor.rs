@@ -92,9 +92,11 @@ impl Files {
                     FileJob::Import(path) => {
                         scene::inspect_decoded_image(&path).map(FileResult::Imported)
                     }
-                    FileJob::Load(path) => {
-                        scene::load_project(&path).map(|doc| FileResult::Loaded(path, doc))
-                    }
+                    FileJob::Load(path) => std::fs::canonicalize(&path)
+                        .map_err(|e| e.to_string())
+                        .and_then(|path| {
+                            scene::load_project(&path).map(|doc| FileResult::Loaded(path, doc))
+                        }),
                     FileJob::Save(path, doc) => {
                         scene::save_project(&doc, &path).map(|()| FileResult::Saved(path, *doc))
                     }
@@ -154,6 +156,9 @@ pub(super) struct Editor {
     gesture: Option<Gesture>,
     crop_edit: bool,
     live_scene: u64,
+    session: super::session::Session,
+    pub(super) clean_windows: std::collections::BTreeMap<u64, [f64; 4]>,
+    restore: Option<rastera_core::recovery::Snapshot>,
     inspector_before: Option<Document>,
     revision: u64,
     files: Files,
@@ -184,7 +189,13 @@ impl Editor {
         let engine = SceneEngine::with_fonts(device, queue, library.clone());
         let capture = super::capture::Capture::new(engine.captures());
         let media = super::media::Media::new(engine.captures());
-        let doc = Document::default();
+        let mut session = super::session::Session::new();
+        let restore = session.restored.take();
+        let doc = restore
+            .as_ref()
+            .map(|s| s.document.clone())
+            .unwrap_or_default();
+        let live_scene = doc.active_scene;
         let revision = engine.submit(doc.clone());
         let mut editor = Self {
             engine,
@@ -194,7 +205,11 @@ impl Editor {
             output_project_reload: false,
             output_disable_requested: false,
             library,
-            mode: Mode::Canvas,
+            mode: if restore.as_ref().is_some_and(|s| s.viewports_mode) {
+                Mode::Viewports
+            } else {
+                Mode::Canvas
+            },
             viewport_selected: Some(1),
             view_gesture: None,
             viewport_size: None,
@@ -207,18 +222,24 @@ impl Editor {
             pending_history: None,
             pending_ready: false,
             doc,
-            selected: None,
+            selected: restore.as_ref().and_then(|s| s.selected),
             history: History::default(),
             gesture: None,
             crop_edit: false,
-            live_scene: 1,
+            live_scene,
+            clean_windows: restore
+                .as_ref()
+                .map(|s| s.clean_windows.clone())
+                .unwrap_or_default(),
+            session,
+            restore: restore.clone(),
             inspector_before: None,
             revision,
             files: Files::new(),
             busy_file: false,
             pending_load: None,
-            project: None,
-            saved: None,
+            project: restore.as_ref().and_then(|s| s.project.clone()),
+            saved: restore.as_ref().and_then(|s| s.saved.clone()),
             error: None,
             probe: std::env::args().find_map(|a| {
                 a.strip_prefix("--editor-probe=")
@@ -640,6 +661,137 @@ impl Editor {
         );
         self.capture.reconcile(&self.doc);
         self.media.reconcile(&self.doc);
+        if let Some(restored) = self.restore.take() {
+            let current = self
+                .destinations
+                .preferences
+                .iter()
+                .map(|(&id, p)| {
+                    (
+                        id,
+                        rastera_core::recovery::Output {
+                            fullscreen: p.fullscreen,
+                            display: p.display.clone(),
+                        },
+                    )
+                })
+                .collect();
+            let eligible = if self.session.prefs.restore_outputs {
+                rastera_core::recovery::eligible_outputs(
+                    &restored,
+                    &self.destinations.discovery.machine,
+                    &current,
+                )
+            } else {
+                vec![]
+            };
+            for (name, r) in &restored.panel_rects {
+                ctx.data_mut(|d| {
+                    d.insert_persisted(
+                        egui::Id::new(name),
+                        egui::containers::panel::PanelState {
+                            rect: egui::Rect::from_min_max(
+                                egui::pos2(r[0], r[1]),
+                                egui::pos2(r[2], r[3]),
+                            ),
+                        },
+                    )
+                });
+            }
+            self.viewport_selected = restored
+                .viewport
+                .filter(|id| self.doc.viewport(*id).is_some());
+            if let Some(r) = restored.window {
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(r[0], r[1])));
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(r[2], r[3])));
+            }
+            for (id, p) in restored.playheads {
+                if let Some(c) = self.media.control(&self.doc, id) {
+                    let mut state = c.state.lock().unwrap();
+                    state.seek = Some(p.seconds);
+                    state.playing = p.playing;
+                }
+            }
+            outputs.extend(eligible);
+            log(format!("session_restored project_id={} scene={} layers={} playheads={} enabled_outputs={}\n",self.doc.project_id,self.doc.active_scene,self.doc.layers.len(),self.doc.playbacks.len(),outputs.len()));
+            self.error = self.session.warning.take();
+        }
+        if self.session.last.elapsed() > Duration::from_secs(1)
+            && self.pending_load.is_none()
+            && !self.busy_file
+        {
+            let window = ctx.input(|i| {
+                i.viewport()
+                    .outer_rect
+                    .zip(i.viewport().inner_rect)
+                    .map(|(o, r)| [o.min.x, o.min.y, r.width(), r.height()])
+            });
+            let playheads = self
+                .doc
+                .playbacks
+                .keys()
+                .filter_map(|&id| {
+                    self.media.control(&self.doc, id).map(|c| {
+                        let s = c.state.lock().unwrap();
+                        (
+                            id,
+                            rastera_core::recovery::Playhead {
+                                seconds: s.position,
+                                playing: s.playing,
+                            },
+                        )
+                    })
+                })
+                .collect();
+            let enabled = outputs
+                .iter()
+                .map(|id| {
+                    let p = self
+                        .destinations
+                        .preferences
+                        .get(id)
+                        .cloned()
+                        .unwrap_or_default();
+                    (
+                        *id,
+                        rastera_core::recovery::Output {
+                            fullscreen: p.fullscreen,
+                            display: p.display,
+                        },
+                    )
+                })
+                .collect();
+            self.session.submit(rastera_core::recovery::Snapshot {
+                version: 1,
+                document: self.doc.clone(),
+                saved: self.saved.clone(),
+                project: self.project.clone(),
+                selected: self.selected,
+                viewport: self.viewport_selected,
+                viewports_mode: self.mode == Mode::Viewports,
+                window,
+                clean_windows: self.clean_windows.clone(),
+                panel_rects: [
+                    "editor_layers",
+                    "editor_inspector",
+                    "viewport_list",
+                    "viewport_inspector",
+                ]
+                .into_iter()
+                .filter_map(|name| {
+                    egui::containers::panel::PanelState::load(ctx, egui::Id::new(name)).map(|p| {
+                        (
+                            name.to_string(),
+                            [p.rect.min.x, p.rect.min.y, p.rect.max.x, p.rect.max.y],
+                        )
+                    })
+                })
+                .collect(),
+                playheads,
+                machine: self.destinations.discovery.machine.clone(),
+                enabled,
+            });
+        }
         mapping::apply_theme(ctx);
         if let Some((target, source)) = self.capture.dialog_ui(ctx) {
             self.finish_gesture();
@@ -662,6 +814,13 @@ impl Editor {
         let scenes_before = self.doc.clone();
         let mut scene_action = None;
         egui::TopBottomPanel::top("quick_scenes").show(ctx, |ui| {
+            if self.busy_file
+                || self.pending_load.is_some()
+                || self.settings.is_some()
+                || self.font_dialog
+            {
+                ui.disable();
+            }
             ui.horizontal_wrapped(|ui| {
                 ui.label("Quick Scenes · Cut");
                 for scene in &self.doc.scenes {
@@ -746,8 +905,44 @@ impl Editor {
         }
         let background_before = self.doc.clone();
         egui::TopBottomPanel::bottom("canvas_background").show(ctx, |ui| {
+            if self.busy_file
+                || self.pending_load.is_some()
+                || self.settings.is_some()
+                || self.font_dialog
+            {
+                ui.disable();
+            }
             use rastera_core::background::{Background, Fit};
             ui.horizontal_wrapped(|ui| {
+                ui.checkbox(&mut self.session.prefs.restore_last, "Restore Last Session");
+                ui.checkbox(
+                    &mut self.session.prefs.restore_outputs,
+                    "Restore enabled outputs on startup",
+                );
+                if let Some(error) = self.session.error() {
+                    ui.colored_label(egui::Color32::YELLOW, error);
+                }
+                let missing: Vec<_> = self
+                    .doc
+                    .images
+                    .values()
+                    .map(|a| &a.path)
+                    .chain(self.doc.media_assets.values().map(|a| &a.path))
+                    .filter(|p| !p.exists())
+                    .collect();
+                if !missing.is_empty() {
+                    ui.colored_label(
+                        egui::Color32::YELLOW,
+                        format!(
+                            "Missing media: {}",
+                            missing
+                                .iter()
+                                .map(|p| p.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    );
+                }
                 ui.label("Canvas background");
                 ui.checkbox(&mut self.doc.test_background, "Diagnostic pattern");
                 if ui.button("Solid color").clicked() {
@@ -1221,5 +1416,53 @@ if ui.button("Restart").clicked(){s.seek=Some(0.);s.playing=true;}let mut pos=s.
             }
         }
         area
+    }
+}
+impl Drop for Editor {
+    fn drop(&mut self) {
+        let mut snapshot =
+            self.session
+                .remembered
+                .clone()
+                .unwrap_or_else(|| rastera_core::recovery::Snapshot {
+                    version: 1,
+                    document: self.doc.clone(),
+                    saved: self.saved.clone(),
+                    project: self.project.clone(),
+                    selected: self.selected,
+                    viewport: self.viewport_selected,
+                    viewports_mode: self.mode == Mode::Viewports,
+                    window: None,
+                    clean_windows: self.clean_windows.clone(),
+                    panel_rects: Default::default(),
+                    playheads: Default::default(),
+                    machine: self.destinations.discovery.machine.clone(),
+                    enabled: Default::default(),
+                });
+        snapshot.clean_windows = self.clean_windows.clone();
+        snapshot.document = self.doc.clone();
+        snapshot.saved = self.saved.clone();
+        snapshot.project = self.project.clone();
+        snapshot.selected = self.selected;
+        snapshot.viewport = self.viewport_selected;
+        snapshot.viewports_mode = self.mode == Mode::Viewports;
+        snapshot.playheads = self
+            .doc
+            .playbacks
+            .keys()
+            .filter_map(|&id| {
+                self.media.control(&self.doc, id).map(|c| {
+                    let s = c.state.lock().unwrap();
+                    (
+                        id,
+                        rastera_core::recovery::Playhead {
+                            seconds: s.position,
+                            playing: s.playing,
+                        },
+                    )
+                })
+            })
+            .collect();
+        self.session.submit(snapshot);
     }
 }

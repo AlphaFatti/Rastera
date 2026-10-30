@@ -164,9 +164,20 @@ API_AVAILABLE(macos(14.0))
 - (void)overlay:(const uint32_t *)canvas lines:(const OverlayLine *)lines count:(uint32_t)count labels:(const OverlayLabel *)labels labelCount:(uint32_t)labelCount;
 - (int)settingsMenu;
 - (void)metrics:(float *)out;
+- (BOOL)recoveryFrame:(double *)out;
+- (void)restoreFrame:(const double *)frame;
 - (void)outputTitle:(NSString *)name;
 @end
 @implementation SharedCanvasConsumer
+- (BOOL)recoveryFrame:(double *)out {
+ NSCAssert(NSThread.isMainThread,@"Recovery geometry on main");if(_embedded||_closed)return NO;NSRect r=_fullscreen?_windowedFrame:_window.frame;out[0]=r.origin.x;out[1]=r.origin.y;out[2]=r.size.width;out[3]=r.size.height;return YES;
+}
+- (void)restoreFrame:(const double *)f {
+ NSCAssert(NSThread.isMainThread,@"Recovery geometry on main");if(_embedded||_closed)return;for(int i=0;i<4;++i)if(!std::isfinite(f[i]))return;if(f[2]<1||f[3]<1||f[2]>32768||f[3]>32768)return;
+ NSRect r=NSMakeRect(f[0],f[1],f[2],f[3]);BOOL reachable=NO;for(NSScreen *s in NSScreen.screens){NSRect intersection=NSIntersectionRect(r,s.visibleFrame);if(intersection.size.width>32&&intersection.size.height>32)reachable=YES;}
+ if(!reachable&&NSScreen.mainScreen){NSRect a=NSScreen.mainScreen.visibleFrame;r.origin=NSMakePoint(a.origin.x+20,NSMaxY(a)-r.size.height-20);}
+ _windowedFrame=r;if(!_fullscreen)[_window setFrame:r display:NO];
+}
 // AppKit-only sizing; acquire immutable completed metadata, never wait for GPU work.
 - (void)syncWindowSize {
     NSCAssert(NSThread.isMainThread,@"Window sizing on main");
@@ -582,3 +593,6 @@ extern "C" void rastera_shared_recovery_probe(){NSCAssert(NSThread.isMainThread,
 extern "C" void rastera_shared_focus_probe(void *handle){if(@available(macOS 14.0,*)){[(__bridge SharedCanvasConsumer *)handle focusForProbe];}}
 
 extern "C" uint64_t rastera_shared_errors(void *handle){if(@available(macOS 14.0,*)){return [(__bridge SharedCanvasConsumer *)handle errorCount];}return 0;}
+
+extern "C" bool rastera_recovery_window_frame(void *handle,double *out){if(@available(macOS 14.0,*)){return [(__bridge SharedCanvasConsumer*)handle recoveryFrame:out];}return false;}
+extern "C" void rastera_recovery_restore_window(void *handle,const double *frame){if(@available(macOS 14.0,*)){[(__bridge SharedCanvasConsumer*)handle restoreFrame:frame];}}

@@ -198,7 +198,11 @@ pub fn run_gif(
             }
             {
                 let mut s = control.state.lock().unwrap();
-                s.position = position.min(next_at);
+                s.position = if done {
+                    asset.duration
+                } else {
+                    position.rem_euclid(asset.duration)
+                };
                 s.phase = if done {
                     "Ended"
                 } else if playing {
@@ -295,6 +299,7 @@ mod gif_tests {
         drop(e);
         let a = inspect_gif(&path).unwrap();
         assert!((a.duration - 0.14).abs() < 0.001);
+        assert_eq!(gif_plays(&path).unwrap(), Some(3));
         let decoder = gif_decoder(&path).unwrap();
         assert!(matches!(decoder.loop_count(),image::metadata::LoopCount::Finite(n) if n.get()==2));
         let frames: Vec<_> = decoder.into_frames().map(Result::unwrap).collect();

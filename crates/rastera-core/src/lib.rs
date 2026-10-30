@@ -118,3 +118,5 @@ pub mod media;
 pub mod background;
 
 pub mod scenes;
+
+pub mod recovery;

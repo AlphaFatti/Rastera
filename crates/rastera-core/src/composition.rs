@@ -572,9 +572,12 @@ fn prepare(
         let key = match layer.content {
             Content::Image(id) => {
                 let a = &doc.images[&id];
-                let m = std::fs::metadata(&a.path)
-                    .map_err(|e| format!("Missing image {}: {e}", a.path.display()))?;
-                format!("image:{:?}:{:?}:{}", a.path, m.modified(), m.len())
+                let m = std::fs::metadata(&a.path).ok();
+                format!(
+                    "image:{:?}:{:?}",
+                    a.path,
+                    m.map(|m| (m.modified().ok(), m.len()))
+                )
             }
             Content::Capture(id) => format!(
                 "capture:{}:{id}:{}",
@@ -602,15 +605,19 @@ fn prepare(
             let mut pixels = match layer.content {
                 Content::Image(id) => {
                     let a = &doc.images[&id];
-                    let checked = crate::scene::inspect_image(&a.path)?;
-                    if checked.width != a.width || checked.height != a.height {
-                        return Err(format!("Image dimensions changed: {}", a.path.display()));
+                    if !a.path.exists() {
+                        image::RgbaImage::from_pixel(a.width, a.height, image::Rgba([0, 0, 0, 255]))
+                    } else {
+                        let checked = crate::scene::inspect_image(&a.path)?;
+                        if checked.width != a.width || checked.height != a.height {
+                            return Err(format!("Image dimensions changed: {}", a.path.display()));
+                        }
+                        image::ImageReader::open(&a.path)
+                            .map_err(|e| e.to_string())?
+                            .decode()
+                            .map_err(|e| format!("Cannot decode {}: {e}", a.path.display()))?
+                            .to_rgba8()
                     }
-                    image::ImageReader::open(&a.path)
-                        .map_err(|e| e.to_string())?
-                        .decode()
-                        .map_err(|e| format!("Cannot decode {}: {e}", a.path.display()))?
-                        .to_rgba8()
                 }
                 Content::Media(id) => {
                     let a = &doc.media_assets[&doc.playbacks[&id].asset];

@@ -5,6 +5,7 @@ mod destinations;
 #[path = "editor.rs"]
 mod editor;
 mod media;
+mod session;
 use eframe::egui;
 use foreign_types::ForeignType;
 use rastera_core::{
@@ -315,6 +316,16 @@ impl eframe::App for App {
             if let Some(preview) = &self.preview {
                 editor.pointers(preview, ctx);
             }
+            for (&id, out) in &self.outputs {
+                let mut frame = [0.; 4];
+                if unsafe { rastera_recovery_window_frame(out.handle.as_ptr(), frame.as_mut_ptr()) }
+                {
+                    editor.clean_windows.insert(id, frame);
+                }
+            }
+            editor
+                .clean_windows
+                .retain(|id, _| editor.doc.viewport(*id).is_some());
             let area = editor.ui(ctx, &mut self.open_outputs);
             if let Some(preview) = &self.preview {
                 editor.native_layout(preview, ctx, area);
@@ -446,6 +457,13 @@ impl eframe::App for App {
                     }),
                 ) {
                     Ok(c) => {
+                        if let Some(frame) =
+                            self.editor.as_ref().and_then(|e| e.clean_windows.get(&id))
+                        {
+                            unsafe {
+                                rastera_recovery_restore_window(c.handle.as_ptr(), frame.as_ptr());
+                            }
+                        }
                         entry.insert(c);
                     }
                     Err(error) => {
@@ -682,4 +700,9 @@ fn run_mode(editor_mode: bool) -> eframe::Result {
             }))
         }),
     )
+}
+
+unsafe extern "C" {
+    fn rastera_recovery_window_frame(handle: *mut std::ffi::c_void, out: *mut f64) -> bool;
+    fn rastera_recovery_restore_window(handle: *mut std::ffi::c_void, frame: *const f64);
 }

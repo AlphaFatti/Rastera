@@ -276,6 +276,7 @@ impl Document {
                 && layer.aspect_lock
                 && matches!(layer.content,Content::Capture(source) if source==id)
             {
+                let aspect = aspect * layer.crop.aspect();
                 let center = [
                     layer.rect.x + layer.rect.width / 2.,
                     layer.rect.y + layer.rect.height / 2.,
@@ -851,6 +852,10 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
         } else {
             base.join(&asset.path)
         };
+        if !resolved.exists() {
+            asset.path = resolved;
+            continue;
+        }
         let checked = inspect_image(&resolved)?;
         if checked.width != asset.width || checked.height != asset.height {
             return Err(format!(
@@ -1154,10 +1159,14 @@ mod tests {
         assert!(saved.contains("../alpha.png"));
         assert_eq!(load_project(&path).unwrap(), doc);
         let bad = base.join("bad.json");
-        std::fs::write(&bad, saved.replace("\"version\": 5", "\"version\": 99")).unwrap();
+        let mut invalid: serde_json::Value = serde_json::from_str(&saved).unwrap();
+        invalid["version"] = 99.into();
+        std::fs::write(&bad, serde_json::to_vec(&invalid).unwrap()).unwrap();
         assert!(load_project(&bad).is_err());
         std::fs::remove_file(&media).unwrap();
-        assert!(load_project(&path).unwrap_err().contains("alpha.png"));
+        let missing = load_project(&path).unwrap();
+        assert_eq!(missing.images.len(), 1);
+        assert!(!missing.images.values().next().unwrap().path.exists());
         let mut broken = doc.clone();
         broken.layers[0].rect.width = f32::NAN;
         assert!(broken.validate().is_err());
