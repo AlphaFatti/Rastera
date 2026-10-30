@@ -417,7 +417,7 @@ impl Material {
             ],
         });
         let shader=device.create_shader_module(wgpu::ShaderModuleDescriptor {label:Some("scene compositor"),source:wgpu::ShaderSource::Wgsl(r#"
-struct Layer { rect:vec4f, properties:vec4f, canvas:vec4f }
+struct Layer { rect:vec4f, properties:vec4f, canvas:vec4f, crop:vec4f }
 @group(0) @binding(0) var<uniform> layer:Layer;
 @group(0) @binding(1) var bitmap:texture_2d<f32>;
 @group(0) @binding(2) var filtering:sampler;
@@ -425,7 +425,7 @@ struct Vertex {@builtin(position) pos:vec4f,@location(0) uv:vec2f}
 @vertex fn vs(@builtin(vertex_index) i:u32)->Vertex {
     var uv=array<vec2f,6>(vec2f(0,0),vec2f(1,0),vec2f(0,1),vec2f(0,1),vec2f(1,0),vec2f(1,1));
     let p=layer.rect.xy+uv[i]*layer.rect.zw;
-    return Vertex(vec4f(p.x/layer.canvas.x*2.0-1.0,1.0-p.y/layer.canvas.y*2.0,0,1),uv[i]*layer.properties.yz);
+    return Vertex(vec4f(p.x/layer.canvas.x*2.0-1.0,1.0-p.y/layer.canvas.y*2.0,0,1),layer.crop.xy + uv[i]*layer.properties.yz*layer.crop.zw);
 }
 @fragment fn fs(v:Vertex)->@location(0) vec4f {let c=textureSample(bitmap,filtering,v.uv);return c*layer.properties.x;}
 "#.into())});
@@ -688,6 +688,10 @@ fn prepare(
             doc.canvas[1] as f32,
             0.,
             0.,
+            layer.crop.left,
+            layer.crop.top,
+            layer.crop.right - layer.crop.left,
+            layer.crop.bottom - layer.crop.top,
         ]
         .iter()
         .flat_map(|v| v.to_ne_bytes())

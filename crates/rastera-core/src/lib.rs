@@ -110,3 +110,5 @@ pub mod viewport_hit;
 mod dynamic_tests;
 
 pub mod capture;
+
+pub mod crop;

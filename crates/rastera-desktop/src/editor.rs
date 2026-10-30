@@ -122,6 +122,7 @@ struct Gesture {
     rect: Rect,
     corner: Option<usize>,
     aspect: Option<f32>,
+    crop: Option<rastera_core::crop::Crop>,
 }
 enum Action {
     AddText,
@@ -147,6 +148,7 @@ pub(super) struct Editor {
     selected: Option<Id>,
     history: History,
     gesture: Option<Gesture>,
+    crop_edit: bool,
     inspector_before: Option<Document>,
     revision: u64,
     files: Files,
@@ -201,6 +203,7 @@ impl Editor {
             selected: None,
             history: History::default(),
             gesture: None,
+            crop_edit: false,
             inspector_before: None,
             revision,
             files: Files::new(),
@@ -513,11 +516,32 @@ impl Editor {
                             rect,
                             corner,
                             aspect: self.doc.aspect(id),
+                            crop: if self.crop_edit
+                                && !matches!(self.doc.layer(id).unwrap().content, Content::Text(_))
+                            {
+                                Some(self.doc.layer(id).unwrap().crop)
+                            } else {
+                                None
+                            },
                         });
                     }
                 }
                 2 | 3 => {
                     if let Some(g) = &self.gesture {
+                        if let (Some(crop), Some(corner)) = (g.crop, g.corner) {
+                            let full = crop.full_rect(g.rect);
+                            let next =
+                                crop.corner(corner, full, [p[0] - g.start[0], p[1] - g.start[1]]);
+                            if let Some(layer) = self.doc.layer_mut(g.id) {
+                                layer.crop = next;
+                                layer.rect = next.rect(full);
+                            }
+                            self.publish();
+                            if event.kind == 3 {
+                                self.finish_gesture();
+                            }
+                            continue;
+                        }
                         let rect = if let Some(corner) = g.corner {
                             scene::resize_drag(g.rect, corner, g.start, p, g.aspect)
                         } else {
@@ -787,6 +811,7 @@ impl Editor {
                         return;
                     };
                     ui.push_id(id, |ui| {
+                        let source_size = self.doc.layer(id).and_then(|l|match l.content {Content::Image(s)=>self.doc.images.get(&s).map(|a|[a.width,a.height]),Content::Capture(s)=>self.doc.captures.get(&s).map(|c|[c.mode.width,c.mode.height]),_=>None});
                         let aspect = self.doc.aspect(id);
                         let Some(layer) = self.doc.layer_mut(id) else {
                             return;
@@ -855,6 +880,19 @@ impl Editor {
                                 ended |= r.changed();
                             }
                         });
+                        if let Some(size)=source_size {
+                            ui.add_enabled_ui(!loading&&!layer.locked,|ui|{
+                                ui.separator();ui.label("Source crop · pixels");
+                                ui.checkbox(&mut self.crop_edit,"Edit crop with corner handles");
+                                let mut crop=layer.crop;
+                                let mut margins=[crop.left*size[0] as f32,crop.top*size[1] as f32,(1.-crop.right)*size[0] as f32,(1.-crop.bottom)*size[1] as f32];
+                                for(i,label)in ["Left","Top","Right","Bottom"].into_iter().enumerate(){ui.horizontal(|ui|{ui.label(label);let r=ui.add(egui::DragValue::new(&mut margins[i]).speed(1.).range(0.0..=size[i%2] as f32-1.));ended|=r.drag_stopped()||r.lost_focus();});}
+                                crop.left=margins[0]/size[0] as f32;crop.top=margins[1]/size[1] as f32;crop.right=1.-margins[2]/size[0] as f32;crop.bottom=1.-margins[3]/size[1] as f32;
+                                if ui.button("Reset Crop").clicked(){crop=rastera_core::crop::Crop::default();ended=true;}
+                                if crop!=layer.crop{if let Err(e)=layer.set_crop(crop){ui.colored_label(egui::Color32::YELLOW,e);}}
+                                ui.small("Crop removes pixels without stretching. Turn crop editing off to resize.");
+                            });
+                        }
                         let source = layer.content.clone();
                         let locked = layer.locked;
                         if let Content::Capture(id)=source {

@@ -63,6 +63,7 @@ pub enum Content {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Layer {
+    pub crop: crate::crop::Crop,
     pub id: Id,
     pub name: String,
     pub rect: Rect,
@@ -97,7 +98,7 @@ fn new_project_id() -> String {
 impl Default for Document {
     fn default() -> Self {
         Self {
-            version: 5,
+            version: 6,
             project_id: new_project_id(),
             canvas: [WIDTH, HEIGHT],
             viewports: crate::mapping::defaults(),
@@ -257,6 +258,7 @@ impl Document {
             locked: false,
             opacity: 1.,
             aspect_lock,
+            crop: crate::crop::Crop::default(),
         });
         id
     }
@@ -325,10 +327,10 @@ impl Document {
         }
         if let Content::Image(source) = layer.content {
             let asset = self.images.get(&source)?;
-            Some(asset.width as f32 / asset.height as f32)
+            Some(asset.width as f32 / asset.height as f32 * layer.crop.aspect())
         } else if let Content::Capture(source) = layer.content {
             let c = self.captures.get(&source)?;
-            Some(c.mode.width as f32 / c.mode.height as f32)
+            Some(c.mode.width as f32 / c.mode.height as f32 * layer.crop.aspect())
         } else {
             None
         }
@@ -341,8 +343,8 @@ impl Document {
             .map(|l| l.id)
     }
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != 5 {
-            return Err("Unsupported project version (expected v5)".into());
+        if self.version != 6 {
+            return Err("Unsupported project version (expected v6)".into());
         }
         if self.project_id.len() != 32 || !self.project_id.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("Invalid project identity".into());
@@ -406,6 +408,10 @@ impl Document {
         let mut used_images = BTreeSet::new();
         for l in &self.layers {
             let r = l.rect;
+            l.crop.validate()?;
+            if matches!(l.content, Content::Text(_)) && l.crop != crate::crop::Crop::default() {
+                return Err("Text cannot be source-cropped".into());
+            }
             if !ids.insert(l.id)
                 || l.id == 0
                 || l.name.len() > 512
@@ -680,7 +686,7 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
             value["viewports"] = serde_json::to_value(crate::mapping::defaults()).unwrap();
         }
         Some(2) => {}
-        Some(3) | Some(4) | Some(5) => {}
+        Some(3) | Some(4) | Some(5) | Some(6) => {}
         _ => return Err("Unsupported project schema version".into()),
     }
     if value["version"].as_u64().is_some_and(|v| v < 3) {
@@ -709,9 +715,18 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
         }
         value["version"] = 4.into();
     }
-    if value["version"].as_u64() != Some(5) {
+    if value["version"].as_u64().is_some_and(|v| v < 5) {
         value["captures"] = serde_json::json!({});
         value["version"] = 5.into();
+    }
+    if value["version"].as_u64() == Some(5) {
+        for layer in value["layers"]
+            .as_array_mut()
+            .ok_or("Missing legacy layers")?
+        {
+            layer["crop"] = serde_json::to_value(crate::crop::Crop::default()).unwrap();
+        }
+        value["version"] = 6.into();
     }
     let mut doc: Document = serde_json::from_value(value).map_err(|e| e.to_string())?;
     doc.validate()?;
