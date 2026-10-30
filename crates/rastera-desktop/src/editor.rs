@@ -654,6 +654,91 @@ impl Editor {
             self.history.record(before, &self.doc);
             self.publish();
         }
+        let background_before = self.doc.clone();
+        egui::TopBottomPanel::bottom("canvas_background").show(ctx, |ui| {
+            use rastera_core::background::{Background, Fit};
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Canvas background");
+                ui.checkbox(&mut self.doc.test_background, "Diagnostic pattern");
+                if ui.button("Solid color").clicked() {
+                    self.doc.test_background = false;
+                    self.doc.background = Background::default();
+                }
+                let images: Vec<_> = self
+                    .doc
+                    .images
+                    .iter()
+                    .map(|(&id, a)| {
+                        (
+                            id,
+                            a.path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned(),
+                        )
+                    })
+                    .collect();
+                egui::ComboBox::from_id_salt("background_image")
+                    .selected_text("Image source")
+                    .show_ui(ui, |ui| {
+                        for (id, name) in images {
+                            if ui.selectable_label(false, name).clicked() {
+                                self.doc.test_background = false;
+                                self.doc.background = Background::Image {
+                                    source: id,
+                                    fit: Fit::Fill,
+                                };
+                            }
+                        }
+                    });
+                let media: Vec<_> = self
+                    .doc
+                    .playbacks
+                    .iter()
+                    .map(|(&id, p)| {
+                        (
+                            id,
+                            self.doc.media_assets[&p.asset]
+                                .path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned(),
+                        )
+                    })
+                    .collect();
+                egui::ComboBox::from_id_salt("background_video")
+                    .selected_text("Video / GIF source")
+                    .show_ui(ui, |ui| {
+                        for (id, name) in media {
+                            if ui.selectable_label(false, name).clicked() {
+                                self.doc.test_background = false;
+                                self.doc.background = Background::Media {
+                                    source: id,
+                                    fit: Fit::Fill,
+                                };
+                                self.doc.playbacks.get_mut(&id).unwrap().looping = Some(true);
+                            }
+                        }
+                    });
+                match &mut self.doc.background {
+                    Background::Solid(c) => {
+                        ui.color_edit_button_srgba_unmultiplied(c);
+                    }
+                    Background::Image { fit, .. } | Background::Media { fit, .. } => {
+                        ui.selectable_value(fit, Fit::Fit, "Fit");
+                        ui.selectable_value(fit, Fit::Fill, "Fill");
+                        ui.selectable_value(fit, Fit::Stretch, "Stretch");
+                    }
+                }
+                ui.small("Import media first; background references share the source.");
+            });
+        });
+        if background_before != self.doc {
+            self.history.record(background_before, &self.doc);
+            self.publish();
+        }
         let mut action = None;
         let loading = self.busy_file
             || self.pending_load.is_some()

@@ -400,7 +400,7 @@ mod document_tests {
         legacy.as_object_mut().unwrap().remove("captures");
         std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
         let mut doc = crate::scene::load_project(&path).unwrap();
-        assert_eq!(doc.version, 7);
+        assert_eq!(doc.version, 8);
         assert!(doc.captures.is_empty());
         assert_eq!(doc.project_id, original.project_id);
         doc.add_capture(source()).unwrap();

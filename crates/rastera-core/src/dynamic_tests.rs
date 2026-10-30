@@ -186,7 +186,7 @@ fn v1_v2_migration_and_empty_custom_round_trips() {
         }
         std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
         let loaded = scene::load_project(&path).unwrap();
-        assert_eq!(loaded.version, 7);
+        assert_eq!(loaded.version, 8);
         assert_eq!(loaded.next_viewport_id, 3);
         assert_eq!(loaded.viewports[0].size, [1920, 1080]);
         assert_eq!(loaded.layers, doc.layers);
@@ -286,7 +286,7 @@ fn v3_identity_migration_preserves_sampling_and_v4_identity_roundtrips() {
     value.as_object_mut().unwrap().remove("project_id");
     std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
     let migrated = scene::load_project(&path).unwrap();
-    assert_eq!(migrated.version, 7);
+    assert_eq!(migrated.version, 8);
     assert_eq!(migrated.viewports, original.viewports);
     assert_eq!(migrated.next_viewport_id, original.next_viewport_id);
     assert_eq!(migrated.project_id.len(), 32);

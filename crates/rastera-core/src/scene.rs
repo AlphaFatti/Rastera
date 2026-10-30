@@ -84,6 +84,7 @@ pub struct Document {
     pub next_viewport_id: u64,
     pub next_id: Id,
     pub test_background: bool,
+    pub background: crate::background::Background,
     pub images: BTreeMap<Id, ImageAsset>,
     pub texts: BTreeMap<Id, TextObject>,
     pub captures: BTreeMap<Id, crate::capture::Source>,
@@ -101,13 +102,14 @@ fn new_project_id() -> String {
 impl Default for Document {
     fn default() -> Self {
         Self {
-            version: 7,
+            version: 8,
             project_id: new_project_id(),
             canvas: [WIDTH, HEIGHT],
             viewports: crate::mapping::defaults(),
             next_viewport_id: 3,
             next_id: 1,
             test_background: false,
+            background: crate::background::Background::default(),
             images: BTreeMap::new(),
             texts: BTreeMap::new(),
             captures: BTreeMap::new(),
@@ -345,7 +347,8 @@ impl Document {
                 }
             })
             .collect();
-        self.images.retain(|id, _| images.contains(id));
+        let background = self.background.clone();
+        self.images.retain(|id, _| images.contains(id)||matches!(background,crate::background::Background::Image{source,..}if source==*id));
         self.texts.retain(|id, _| texts.contains(id));
         let captures: BTreeSet<_> = self
             .layers
@@ -370,7 +373,7 @@ impl Document {
                 }
             })
             .collect();
-        self.playbacks.retain(|id, _| media.contains(id));
+        self.playbacks.retain(|id, _| media.contains(id)||matches!(background,crate::background::Background::Media{source,..}if source==*id));
         let assets: BTreeSet<_> = self.playbacks.values().map(|p| p.asset).collect();
         self.media_assets.retain(|id, _| assets.contains(id));
     }
@@ -400,8 +403,8 @@ impl Document {
             .map(|l| l.id)
     }
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != 7 {
-            return Err("Unsupported project version (expected v7)".into());
+        if self.version != 8 {
+            return Err("Unsupported project version (expected v8)".into());
         }
         if self.project_id.len() != 32 || !self.project_id.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("Invalid project identity".into());
@@ -475,6 +478,19 @@ impl Document {
             if id == 0 || !ids.insert(id) || !self.media_assets.contains_key(&p.asset) {
                 return Err("Invalid playback/asset reference".into());
             }
+        }
+        match self.background {
+            crate::background::Background::Image { source, .. }
+                if !self.images.contains_key(&source) =>
+            {
+                return Err("Missing background image reference".into())
+            }
+            crate::background::Background::Media { source, .. }
+                if !self.playbacks.contains_key(&source) =>
+            {
+                return Err("Missing background playback reference".into())
+            }
+            _ => {}
         }
         let mut used_images = BTreeSet::new();
         for l in &self.layers {
@@ -765,7 +781,7 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
             value["viewports"] = serde_json::to_value(crate::mapping::defaults()).unwrap();
         }
         Some(2) => {}
-        Some(3) | Some(4) | Some(5) | Some(6) | Some(7) => {}
+        Some(3) | Some(4) | Some(5) | Some(6) | Some(7) | Some(8) => {}
         _ => return Err("Unsupported project schema version".into()),
     }
     if value["version"].as_u64().is_some_and(|v| v < 3) {
@@ -811,6 +827,11 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
         value["media_assets"] = serde_json::json!({});
         value["playbacks"] = serde_json::json!({});
         value["version"] = 7.into();
+    }
+    if value["version"] == 7 {
+        value["background"] =
+            serde_json::to_value(crate::background::Background::default()).unwrap();
+        value["version"] = 8.into();
     }
     let mut doc: Document = serde_json::from_value(value).map_err(|e| e.to_string())?;
     doc.validate()?;

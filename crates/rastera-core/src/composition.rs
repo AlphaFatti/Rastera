@@ -36,6 +36,7 @@ struct Prepared {
     captures: Vec<LiveImage>,
     revision: u64,
     background: bool,
+    clear: [u8; 4],
     layers: Vec<Draw>,
     generation: Arc<Generation>,
     meta: crate::mapping::FrameMeta,
@@ -337,7 +338,19 @@ impl SceneFeed {
                         view: target,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            load: wgpu::LoadOp::Clear({
+                                let c = self
+                                    .current
+                                    .as_ref()
+                                    .map(|s| s.clear)
+                                    .unwrap_or([0, 0, 0, 255]);
+                                wgpu::Color {
+                                    r: c[0] as f64 / 255.,
+                                    g: c[1] as f64 / 255.,
+                                    b: c[2] as f64 / 255.,
+                                    a: c[3] as f64 / 255.,
+                                }
+                            }),
                             store: wgpu::StoreOp::Store,
                         },
                     })],
@@ -548,7 +561,8 @@ fn prepare(
     let mut capture_ids = HashSet::new();
     let mut layers = vec![];
     let mut used = HashSet::new();
-    for layer in &doc.layers {
+    let background = doc.background.layer(doc);
+    for layer in background.iter().chain(doc.layers.iter()) {
         if !layer.visible || layer.opacity == 0. {
             continue;
         }
@@ -755,6 +769,11 @@ fn prepare(
         captures,
         revision: 0,
         background: doc.test_background,
+        clear: if let crate::background::Background::Solid(c) = doc.background {
+            c
+        } else {
+            [0, 0, 0, 255]
+        },
         generation,
         meta: crate::mapping::FrameMeta {
             canvas: doc.canvas,

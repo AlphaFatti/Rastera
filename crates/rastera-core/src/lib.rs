@@ -114,3 +114,5 @@ pub mod capture;
 pub mod crop;
 
 pub mod media;
+
+pub mod background;
