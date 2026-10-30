@@ -30,6 +30,27 @@ fn main() {
             "-o",
         ])
         .arg(&capture_object));
+    println!("cargo:rerun-if-changed=native/media.mm");
+    let media_object = out.join("media.o");
+    run(Command::new("xcrun")
+        .args([
+            "--sdk",
+            "macosx",
+            "clang++",
+            "-std=c++17",
+            "-fobjc-arc",
+            "-fblocks",
+            "-mmacosx-version-min=14.0",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-Wno-unused-parameter",
+            "-Wno-deprecated-declarations",
+            "-c",
+            "native/media.mm",
+            "-o",
+        ])
+        .arg(&media_object));
     let object = out.join("shared_canvas.o");
     run(Command::new("xcrun")
         .args([
@@ -56,7 +77,8 @@ fn main() {
         .arg("crs")
         .arg(out.join("librastera_shared_canvas.a"))
         .arg(object)
-        .arg(capture_object));
+        .arg(capture_object)
+        .arg(media_object));
     println!("cargo:rustc-link-search=native={}", out.display());
     println!("cargo:rustc-link-lib=static=rastera_shared_canvas");
     for framework in [

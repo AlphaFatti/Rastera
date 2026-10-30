@@ -112,3 +112,5 @@ mod dynamic_tests;
 pub mod capture;
 
 pub mod crop;
+
+pub mod media;

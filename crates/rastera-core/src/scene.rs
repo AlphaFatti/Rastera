@@ -59,6 +59,7 @@ pub enum Content {
     Image(Id),
     Text(Id),
     Capture(Id),
+    Media(Id),
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -86,6 +87,8 @@ pub struct Document {
     pub images: BTreeMap<Id, ImageAsset>,
     pub texts: BTreeMap<Id, TextObject>,
     pub captures: BTreeMap<Id, crate::capture::Source>,
+    pub media_assets: BTreeMap<Id, crate::media::Asset>,
+    pub playbacks: BTreeMap<Id, crate::media::Playback>,
     /// Bottom to top. Layer IDs remain stable through edits/reordering/save/load.
     pub layers: Vec<Layer>,
 }
@@ -98,7 +101,7 @@ fn new_project_id() -> String {
 impl Default for Document {
     fn default() -> Self {
         Self {
-            version: 6,
+            version: 7,
             project_id: new_project_id(),
             canvas: [WIDTH, HEIGHT],
             viewports: crate::mapping::defaults(),
@@ -108,6 +111,8 @@ impl Default for Document {
             images: BTreeMap::new(),
             texts: BTreeMap::new(),
             captures: BTreeMap::new(),
+            media_assets: BTreeMap::new(),
+            playbacks: BTreeMap::new(),
             layers: vec![],
         }
     }
@@ -211,6 +216,41 @@ impl Document {
         let source = self.id();
         self.images.insert(source, asset);
         self.add_layer(name, Content::Image(source), rect, true)
+    }
+    pub fn add_media(&mut self, asset: crate::media::Asset) -> Result<Id, String> {
+        crate::media::validate_asset(&asset)?;
+        if self.playbacks.len() >= 4 {
+            return Err("Media limit: four playback instances".into());
+        }
+        let rect = initial_image_rect_on(asset.size, self.canvas);
+        let name = asset
+            .path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let source = self
+            .media_assets
+            .iter()
+            .find(|(_, a)| **a == asset)
+            .map(|(&id, _)| id)
+            .unwrap_or_else(|| {
+                let id = self.id();
+                self.media_assets.insert(id, asset);
+                id
+            });
+        let playback = self.id();
+        self.playbacks.insert(
+            playback,
+            crate::media::Playback {
+                asset: source,
+                playing: true,
+                looping: None,
+                end: crate::media::End::Hold,
+                restart_on_activation: false,
+            },
+        );
+        Ok(self.add_layer(name, Content::Media(playback), rect, true))
     }
     pub fn add_capture(&mut self, source: crate::capture::Source) -> Result<Id, String> {
         source.validate()?;
@@ -319,6 +359,20 @@ impl Document {
             })
             .collect();
         self.captures.retain(|id, _| captures.contains(id));
+        let media: BTreeSet<_> = self
+            .layers
+            .iter()
+            .filter_map(|l| {
+                if let Content::Media(id) = l.content {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        self.playbacks.retain(|id, _| media.contains(id));
+        let assets: BTreeSet<_> = self.playbacks.values().map(|p| p.asset).collect();
+        self.media_assets.retain(|id, _| assets.contains(id));
     }
     pub fn aspect(&self, id: Id) -> Option<f32> {
         let layer = self.layer(id)?;
@@ -331,6 +385,9 @@ impl Document {
         } else if let Content::Capture(source) = layer.content {
             let c = self.captures.get(&source)?;
             Some(c.mode.width as f32 / c.mode.height as f32 * layer.crop.aspect())
+        } else if let Content::Media(source) = layer.content {
+            let a = &self.media_assets[&self.playbacks[&source].asset];
+            Some(a.size[0] as f32 / a.size[1] as f32 * layer.crop.aspect())
         } else {
             None
         }
@@ -343,8 +400,8 @@ impl Document {
             .map(|l| l.id)
     }
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != 6 {
-            return Err("Unsupported project version (expected v6)".into());
+        if self.version != 7 {
+            return Err("Unsupported project version (expected v7)".into());
         }
         if self.project_id.len() != 32 || !self.project_id.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("Invalid project identity".into());
@@ -405,6 +462,20 @@ impl Document {
             }
             capture.validate()?;
         }
+        if self.playbacks.len() > 4 || self.media_assets.len() > 16 {
+            return Err("Media resource limit exceeded".into());
+        }
+        for (&id, a) in &self.media_assets {
+            if id == 0 || !ids.insert(id) {
+                return Err("Invalid media asset ID".into());
+            }
+            crate::media::validate_asset(a)?;
+        }
+        for (&id, p) in &self.playbacks {
+            if id == 0 || !ids.insert(id) || !self.media_assets.contains_key(&p.asset) {
+                return Err("Invalid playback/asset reference".into());
+            }
+        }
         let mut used_images = BTreeSet::new();
         for l in &self.layers {
             let r = l.rect;
@@ -436,6 +507,11 @@ impl Document {
                         .ok_or("Missing image object reference")?;
                     if used_images.insert(id) {
                         pixels += a.width as u64 * a.height as u64;
+                    }
+                }
+                Content::Media(id) => {
+                    if !self.playbacks.contains_key(&id) {
+                        return Err("Missing playback instance".into());
                     }
                 }
                 Content::Capture(id) => {
@@ -651,6 +727,9 @@ pub fn save_project(doc: &Document, path: &Path) -> Result<(), String> {
     for asset in stored.images.values_mut() {
         asset.path = relative(&asset.path, &base);
     }
+    for asset in stored.media_assets.values_mut() {
+        asset.path = relative(&asset.path, &base);
+    }
     let bytes = serde_json::to_vec_pretty(&stored).map_err(|e| e.to_string())?;
     let temporary = path.with_extension(format!("json.tmp-{}", std::process::id()));
     let mut file = std::fs::OpenOptions::new()
@@ -686,7 +765,7 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
             value["viewports"] = serde_json::to_value(crate::mapping::defaults()).unwrap();
         }
         Some(2) => {}
-        Some(3) | Some(4) | Some(5) | Some(6) => {}
+        Some(3) | Some(4) | Some(5) | Some(6) | Some(7) => {}
         _ => return Err("Unsupported project schema version".into()),
     }
     if value["version"].as_u64().is_some_and(|v| v < 3) {
@@ -728,6 +807,11 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
         }
         value["version"] = 6.into();
     }
+    if value["version"] == 6 {
+        value["media_assets"] = serde_json::json!({});
+        value["playbacks"] = serde_json::json!({});
+        value["version"] = 7.into();
+    }
     let mut doc: Document = serde_json::from_value(value).map_err(|e| e.to_string())?;
     doc.validate()?;
     let base = path
@@ -748,6 +832,12 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
             ));
         }
         asset.path = checked.path;
+    }
+    for asset in doc.media_assets.values_mut() {
+        if !asset.path.is_absolute() {
+            asset.path = base.join(&asset.path);
+        }
+        asset.path = std::fs::canonicalize(&asset.path).unwrap_or_else(|_| asset.path.clone());
     }
     Ok(doc)
 }

@@ -58,11 +58,13 @@ fn dialog(kind: i32) -> Option<PathBuf> {
 }
 enum FileJob {
     Import(PathBuf),
+    Media(PathBuf),
     Load(PathBuf),
     Save(PathBuf, Box<Document>),
 }
 enum FileResult {
     Imported(scene::ImageAsset),
+    Media(rastera_core::media::Asset),
     Loaded(PathBuf, Document),
     Saved(PathBuf, Document),
 }
@@ -86,6 +88,7 @@ impl Files {
                     Err(_) => break,
                 };
                 let result = match job {
+                    FileJob::Media(path) => super::media::inspect(&path).map(FileResult::Media),
                     FileJob::Import(path) => {
                         scene::inspect_decoded_image(&path).map(FileResult::Imported)
                     }
@@ -141,6 +144,7 @@ enum Action {
 pub(super) struct Editor {
     pub engine: SceneEngine,
     pub(super) capture: super::capture::Capture,
+    media: super::media::Media,
     pub doc: Document,
     pub(super) destinations: super::destinations::Destinations,
     output_project_reload: bool,
@@ -178,11 +182,13 @@ impl Editor {
         let library = mapping::library();
         let engine = SceneEngine::with_fonts(device, queue, library.clone());
         let capture = super::capture::Capture::new(engine.captures());
+        let media = super::media::Media::new(engine.captures());
         let doc = Document::default();
         let revision = engine.submit(doc.clone());
         let mut editor = Self {
             engine,
             capture,
+            media,
             destinations: super::destinations::Destinations::new(),
             output_project_reload: false,
             output_disable_requested: false,
@@ -269,6 +275,17 @@ impl Editor {
             self.busy_file = false;
             match result {
                 Err(e) => self.error = Some(e),
+                Ok(FileResult::Media(asset)) => {
+                    let before = self.doc.clone();
+                    match self.doc.add_media(asset) {
+                        Ok(id) => {
+                            self.selected = Some(id);
+                            self.history.record(before, &self.doc);
+                            self.publish();
+                        }
+                        Err(e) => self.error = Some(e),
+                    }
+                }
                 Ok(FileResult::Imported(asset)) => {
                     self.finish_inspector();
                     let before = self.doc.clone();
@@ -617,6 +634,7 @@ impl Editor {
             outputs,
         );
         self.capture.reconcile(&self.doc);
+        self.media.reconcile(&self.doc);
         mapping::apply_theme(ctx);
         if let Some((target, source)) = self.capture.dialog_ui(ctx) {
             self.finish_gesture();
@@ -644,6 +662,14 @@ impl Editor {
         egui::TopBottomPanel::top("editor_toolbar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.strong("Live Edit — changes affect outputs");
+                if ui
+                    .add_enabled(!loading, egui::Button::new("Insert Video / GIF…"))
+                    .clicked()
+                {
+                    if let Some(path) = dialog(3) {
+                        self.file_job(FileJob::Media(path));
+                    }
+                }
                 if ui
                     .add_enabled(!loading, egui::Button::new("Add Capture Device…"))
                     .clicked()
@@ -811,7 +837,7 @@ impl Editor {
                         return;
                     };
                     ui.push_id(id, |ui| {
-                        let source_size = self.doc.layer(id).and_then(|l|match l.content {Content::Image(s)=>self.doc.images.get(&s).map(|a|[a.width,a.height]),Content::Capture(s)=>self.doc.captures.get(&s).map(|c|[c.mode.width,c.mode.height]),_=>None});
+                        let source_size = self.doc.layer(id).and_then(|l|match l.content {Content::Image(s)=>self.doc.images.get(&s).map(|a|[a.width,a.height]),Content::Capture(s)=>self.doc.captures.get(&s).map(|c|[c.mode.width,c.mode.height]),Content::Media(s)=>Some(self.doc.media_assets[&self.doc.playbacks[&s].asset].size),_=>None});
                         let aspect = self.doc.aspect(id);
                         let Some(layer) = self.doc.layer_mut(id) else {
                             return;
@@ -874,7 +900,7 @@ impl Editor {
                                 egui::Slider::new(&mut layer.opacity, 0.0..=1.).text("Opacity"),
                             );
                             ended |= r.drag_stopped();
-                            if matches!(layer.content, Content::Image(_)|Content::Capture(_)) {
+                            if matches!(layer.content, Content::Image(_)|Content::Capture(_)|Content::Media(_)) {
                                 let r =
                                     ui.checkbox(&mut layer.aspect_lock, "Lock source aspect ratio");
                                 ended |= r.changed();
@@ -895,6 +921,14 @@ impl Editor {
                         }
                         let source = layer.content.clone();
                         let locked = layer.locked;
+                        if let Content::Media(id)=source {
+                            if let Some(c)=self.media.control(&self.doc,id){let mut s=c.state.lock().unwrap();ui.separator();ui.label(&s.phase);if ui.button(if s.playing{"Pause"}else{"Play"}).clicked(){s.playing = !s.playing;self.doc.playbacks.get_mut(&id).unwrap().playing=s.playing;}
+if ui.button("Restart").clicked(){s.seek=Some(0.);s.playing=true;}let mut pos=s.position;if ui.add(egui::Slider::new(&mut pos,0.0..=s.duration).text("Seek (s)")).changed(){s.seek=Some(pos);}}
+                            let p=self.doc.playbacks.get_mut(&id).unwrap();
+                            egui::ComboBox::from_label("Loop").selected_text(format!("{:?}",p.looping)).show_ui(ui,|ui|{ui.selectable_value(&mut p.looping,None,"File default");ui.selectable_value(&mut p.looping,Some(true),"Loop");ui.selectable_value(&mut p.looping,Some(false),"Once");});
+                            ui.horizontal(|ui|{ui.label("End");ui.selectable_value(&mut p.end,rastera_core::media::End::Hold,"Hold Last Frame");ui.selectable_value(&mut p.end,rastera_core::media::End::Black,"Black");});
+                            ui.small("Duplicate shares playback; Import creates an independent playhead. Video audio is muted.");
+                        }
                         if let Content::Capture(id)=source {
                             let source=&self.doc.captures[&id];let status=self.capture.status(&self.doc,id);
                             ui.separator();ui.label(format!("{} · {}",source.name,status.phase));ui.label(format!("Requested {}×{} @ {:.3} fps",source.mode.width,source.mode.height,source.mode.fps));ui.label(format!("Actual {}×{} BGRA · negotiated {:.3} fps · observed {:.2} fps · {} delivered / {} upload operations",status.actual[0],status.actual[1],status.negotiated_fps,status.cadence,status.frames,status.uploaded));

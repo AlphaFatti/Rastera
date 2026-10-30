@@ -195,6 +195,30 @@ impl Slot {
             None
         })
     }
+    /// File-media frames remain valid while paused, held at end, or on a long GIF delay.
+    pub fn persistent_snapshot(&self) -> Option<Option<Arc<Frame>>> {
+        Some(self.state.try_lock().ok()?.latest.clone())
+    }
+    pub fn deliver_owned(&self, epoch: u64, width: u32, height: u32, bgra: Vec<u8>) {
+        if bgra.len() != width as usize * height as usize * 4 {
+            return;
+        }
+        let mut s = self.state.lock().unwrap();
+        if self.epoch.load(Ordering::Acquire) != epoch {
+            return;
+        }
+        s.frames += 1;
+        let sequence = s.frames;
+        s.phase = "Live".into();
+        s.actual = [width, height];
+        s.latest = Some(Arc::new(Frame {
+            width,
+            height,
+            bgra,
+            sequence,
+            arrived: Instant::now(),
+        }));
+    }
     pub fn latest(&self) -> Option<Arc<Frame>> {
         self.snapshot().flatten()
     }
@@ -376,7 +400,7 @@ mod document_tests {
         legacy.as_object_mut().unwrap().remove("captures");
         std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
         let mut doc = crate::scene::load_project(&path).unwrap();
-        assert_eq!(doc.version, 6);
+        assert_eq!(doc.version, 7);
         assert!(doc.captures.is_empty());
         assert_eq!(doc.project_id, original.project_id);
         doc.add_capture(source()).unwrap();

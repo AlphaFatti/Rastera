@@ -4,6 +4,7 @@ mod capture;
 mod destinations;
 #[path = "editor.rs"]
 mod editor;
+mod media;
 use eframe::egui;
 use foreign_types::ForeignType;
 use rastera_core::{

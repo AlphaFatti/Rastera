@@ -30,6 +30,7 @@ struct Draw {
 struct LiveImage {
     image: Arc<GpuImage>,
     slot: Arc<crate::capture::Slot>,
+    persistent: bool,
 }
 struct Prepared {
     captures: Vec<LiveImage>,
@@ -278,7 +279,11 @@ impl SceneFeed {
     ) -> wgpu::CommandEncoder {
         if let Some(scene) = &self.current {
             for live in &scene.captures {
-                let Some(frame) = live.slot.snapshot() else {
+                let Some(frame) = (if live.persistent {
+                    live.slot.persistent_snapshot()
+                } else {
+                    live.slot.snapshot()
+                }) else {
                     continue;
                 };
                 let epoch = live.slot.epoch.load(Ordering::Acquire);
@@ -560,6 +565,13 @@ fn prepare(
                 doc.project_id,
                 serde_json::to_string(&doc.captures[&id].mode).unwrap()
             ),
+            Content::Media(id) => {
+                let a = &doc.media_assets[&doc.playbacks[&id].asset];
+                format!(
+                    "media:{}:{id}:{}:{}:{:?}",
+                    doc.project_id, a.size[0], a.size[1], a.path
+                )
+            }
             Content::Text(id) => format!(
                 "text:{}:{}:{}",
                 serde_json::to_string(&doc.texts[&id]).map_err(|e| e.to_string())?,
@@ -583,6 +595,10 @@ fn prepare(
                         .decode()
                         .map_err(|e| format!("Cannot decode {}: {e}", a.path.display()))?
                         .to_rgba8()
+                }
+                Content::Media(id) => {
+                    let a = &doc.media_assets[&doc.playbacks[&id].asset];
+                    image::RgbaImage::from_pixel(a.size[0], a.size[1], image::Rgba([0, 0, 0, 0]))
                 }
                 Content::Capture(id) => {
                     let mode = &doc.captures[&id].mode;
@@ -622,7 +638,7 @@ fn prepare(
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: if matches!(layer.content, Content::Capture(_)) {
+                format: if matches!(layer.content, Content::Capture(_) | Content::Media(_)) {
                     wgpu::TextureFormat::Bgra8Unorm
                 } else {
                     wgpu::TextureFormat::Rgba8Unorm
@@ -648,7 +664,7 @@ fn prepare(
             let image = Arc::new(GpuImage {
                 view: texture.create_view(&Default::default()),
                 _texture: texture,
-                black: if matches!(layer.content, Content::Capture(_)) {
+                black: if matches!(layer.content, Content::Capture(_) | Content::Media(_)) {
                     Some(Arc::new(pixels.into_raw()))
                 } else {
                     None
@@ -662,6 +678,16 @@ fn prepare(
                 captures.push(LiveImage {
                     image: image.clone(),
                     slot: hub.slot(&crate::capture::Hub::key(&doc.project_id, id)),
+                    persistent: false,
+                });
+            }
+        }
+        if let Content::Media(id) = layer.content {
+            if capture_ids.insert(id) {
+                captures.push(LiveImage {
+                    image: image.clone(),
+                    slot: hub.slot(&crate::media::key(&doc.project_id, id)),
+                    persistent: true,
                 });
             }
         }

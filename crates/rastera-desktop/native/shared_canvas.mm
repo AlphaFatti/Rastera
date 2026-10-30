@@ -514,7 +514,7 @@ extern "C" char *rastera_editor_dialog(int kind) {
         return strdup(panel.URL.path.UTF8String);
     }
     NSOpenPanel *panel=[NSOpenPanel openPanel];panel.canChooseDirectories=NO;panel.allowsMultipleSelection=NO;
-    panel.allowedContentTypes=kind==0?@[UTTypePNG,UTTypeJPEG]:@[UTTypeJSON];
+    panel.allowedContentTypes=kind==0?@[UTTypePNG,UTTypeJPEG]:(kind==3?@[UTTypeMovie,UTTypeGIF]:@[UTTypeJSON]);
     if([panel runModal]!=NSModalResponseOK) return nullptr;
     return strdup(panel.URL.path.UTF8String);
 }

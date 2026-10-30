@@ -6,6 +6,8 @@ mod capture;
 mod display;
 #[path = "editor_dynamic_probe.rs"]
 mod dynamic;
+#[path = "editor_media_probe.rs"]
+mod media;
 unsafe extern "C" {
     fn rastera_editor_close_output(handle: *mut std::ffi::c_void);
     fn rastera_editor_replay(
@@ -27,10 +29,14 @@ pub(super) struct Probe {
     dynamic: Option<dynamic::Dynamic>,
     display: Option<display::DisplayProbe>,
     capture: Option<capture::CaptureProbe>,
+    media: Option<media::MediaProbe>,
 }
 impl Probe {
     pub fn new(folder: PathBuf) -> Self {
         Self {
+            media: std::env::args()
+                .any(|a| a == "--media-probe")
+                .then(|| media::MediaProbe::new(folder.clone())),
             capture: std::env::args()
                 .any(|a| a == "--capture-probe" || a == "--capture-reopen-probe")
                 .then(|| capture::CaptureProbe::new(folder.clone())),
@@ -67,6 +73,16 @@ impl Probe {
     ) -> bool {
         if e.busy_file || e.pending_load.is_some() || e.engine.applied() != e.revision {
             return false;
+        }
+        if let Some(media) = &mut self.media {
+            return match media.tick(e, enabled) {
+                Ok(done) => done,
+                Err(error) => {
+                    log(format!("media_probe failed=1 error={error}\n"));
+                    e.error = Some(error);
+                    true
+                }
+            };
         }
         if let Some(capture) = &mut self.capture {
             return match capture.tick(e, preview, outputs, enabled) {
