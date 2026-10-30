@@ -1,8 +1,26 @@
 # Rastera
 
-Rastera is a free, open-source live video and presentation application in early development, targeting Apple silicon Macs first. A possible Windows port is future work. The ambition is a flexible live production canvas, output routing, and presentation workflow; the current application is an early image/text/live-capture canvas editor alongside preserved GPU diagnostic baselines.
+Rastera is a free, open-source live video and presentation application in early development, targeting Apple silicon Macs first. A possible Windows port is future work. The ambition is a flexible live production canvas, output routing, and presentation workflow; the current application is an early scene-based image/text/capture/video/GIF canvas editor alongside preserved GPU diagnostic baselines.
 
 The long-term [architecture blueprint](docs/architecture.md) describes planned work, not implemented capabilities. See [development status](docs/development-status.md) for the current scope and verification record. An application source license still needs to be selected before a public release.
+
+## Media and quick scenes (0.0.2-dev review build)
+
+```sh
+./tools/build-app.sh
+open target/Rastera.app
+# Bypass recovery or explicitly open a project:
+open target/Rastera.app --args --no-restore --outputs=0
+open target/Rastera.app --args --project=/absolute/path/show.rastera.json --outputs=0
+```
+
+Import images, **Insert Video / GIF…**, or add an authorized camera. Picture layers have normalized, non-destructive source crop controls and an explicit crop-handle mode. File playback offers play/pause, restart, seek, loop overrides and Hold Last Frame/Black; video audio is muted. Backgrounds support solid/image/video with Fit, Fill and Stretch. Quick Scenes owns persistent ordered layer instances/backgrounds and cuts prepared compositions at frame boundaries while preserving viewport/output identities. Duplicate picture/media layers deliberately share sources; re-import a clip for an independent playhead.
+
+**Restore Last Session** retains unsaved edits, original project identity/path, active scene, selection/mode, window/panel layout and media positions/states in a separate bounded recovery journal. **Restore enabled outputs on startup** defaults off and checks exact saved machine/destination preferences. Explicit --project overrides restoration; --no-restore bypasses it. --session-dir=/absolute/scratch/path isolates recovery and destination preferences for tests. Camera authorization is never requested by restoration.
+
+Projects now save as **schema 9**, explicitly migrating versions 1–8 (including schema-5 capture projects). Missing files/devices retain document references and useful status. Limits: 16 scenes, 128 layers per scene, two capture definitions and four file-playback instances up to 1920×1080 pixels each (either orientation). The independent producer, four-texture pool, bounded generations and native completion-held leases remain. #17151A belongs to the operator workspace, independently of canvas backgrounds.
+
+See [media/scenes implementation, commands, measurements and limitations](docs/media-scenes.md). Native API/replay checks and human picture verification are reported separately; existing pause/capture limits and production acceptance remain pending. The sections below preserve earlier checkpoint details; schema 9 and this recovery policy supersede their schema-5/no-recovery descriptions.
 
 ## Capture-enabled development app (0.0.2-dev)
 
@@ -13,7 +31,7 @@ open target/Rastera.app
 
 Use **Add Capture Device…**, allow Rastera camera access, choose an AVFoundation device and resolution/frame rate, then add it to the canvas. The signed development bundle has the camera usage description/entitlement and stable identity needed for consistent native permission testing. Capture layers share sessions when duplicated and support normal editing/history. The inspector reports actual BGRA format/cadence and device status; missing/unauthorized sources remain saved and draw black.
 
-Two source definitions are supported, up to 1920×1080 pixels (either orientation) at 1–60 fps. This is a bounded upload-copy path, not zero-copy capture; the display path still has no CPU canvas readback. Projects save as schema 5 with explicit v1–v4 migration. Existing assigned-display destinations and Disable All Outputs remain; that recovery action does not stop referenced camera sources. Audio and the native DeckLink SDK remain future work.
+Two source definitions are supported, up to 1920×1080 pixels (either orientation) at 1–60 fps. This is a bounded upload-copy path, not zero-copy capture; the display path still has no CPU canvas readback. The capture checkpoint used schema 5; current projects save as schema 9 with explicit v1–v8 migration. Existing assigned-display destinations and Disable All Outputs remain; that recovery action does not stop referenced camera sources. Audio and the native DeckLink SDK remain future work.
 
 [Capture architecture, exact commands, measured devices and remaining checks](docs/capture-devices.md) separate automated/native evidence from the user's successful FaceTime-plus-OBS/DVD picture observation. [v0.0.1](https://github.com/AlphaFatti/Rastera/tree/v0.0.1) is the prior fullscreen development-preview checkpoint; main remains unmerged.
 
@@ -27,7 +45,7 @@ cargo run --release --locked -p rastera-desktop --bin canvas-editor -- --project
 
 Import PNG/JPEG, add editable multiline text, select/drag/corner-resize in the native preview, and use the layer list and inspector for geometry, appearance, ordering, locking and visibility. Undo/redo and versioned project save/load are implemented. **Live Edit — changes affect outputs.** Settings provides transactional custom canvas dimensions. Canvas / Viewports modes add editable output pan, zoom and rotation, persistent names/colors, and an installed-font family/face picker. Viewports mode supports zero to eight persistent viewports, separate clean-window open/close controls, and arbitrary logical output proportions within validated limits. Width/Height Apply preserves center, footprint scale and rotation. New viewports start at 1:1 canvas pixels; footprint scale changes canvas coverage independently of output resolution, with Fit Canvas also available. Clean windows open and resize on dimension changes to the specified Retina backing-pixel size. One independent core producer composes the canvas; the native preview and open outputs share completed frames through a four-texture pool, with at most two generations during canvas resize. Canvas boundaries and editing/mapping graphics belong only to the operator preview. Default 3840 × 1080 projects retain the exact original halves.
 
-See [dynamic viewports, custom dimensions and current verification](docs/dynamic-viewports.md), [canvas dimensions, mapping and fonts](docs/canvas-mapping.md) and [the original editor guide](docs/canvas-editor.md) for controls, project/media handling, worker ownership, limits, native test results and remaining human checks. [Font notices](THIRD_PARTY_NOTICES.md) are included. Save before closing or opening another project: there is no automatic recovery or unsaved-close prompt. The operator UI transition pause and capture limitations remain; this editor does not establish milestone acceptance or production readiness.
+See [dynamic viewports, custom dimensions and current verification](docs/dynamic-viewports.md), [canvas dimensions, mapping and fonts](docs/canvas-mapping.md) and [the original editor guide](docs/canvas-editor.md) for controls, project/media handling, worker ownership, limits, native test results and remaining human checks. [Font notices](THIRD_PARTY_NOTICES.md) are included. Save explicit projects for durable show files. Last-session recovery now protects recent edits separately; there is still no unsaved-close prompt. The operator UI transition pause and capture limitations remain; this editor does not establish milestone acceptance or production readiness.
 
 Try all seven output presets (first four windows open initially):
 
@@ -35,7 +53,7 @@ Try all seven output presets (first four windows open initially):
 cargo run --release --locked -p rastera-desktop --bin canvas-editor -- --project=examples/dynamic-viewports.rastera.json --outputs=4
 ```
 
-Add/Remove Selected and each viewport’s Open clean output control are in Viewports mode. Closing a window preserves its logical definition. Undoing deletion restores the definition with its original ID, without reopening the window. Projects save as schema 5 with portable project identity and capture definitions; versions 1–4 migrate explicitly, preserving their sampling. Saved empty viewport lists stay empty. Assigned-display fullscreen is available as a review prototype; see below.
+Add/Remove Selected and each viewport’s Open clean output control are in Viewports mode. Closing a window preserves its logical definition. Undoing deletion restores the definition with its original ID, without reopening the window. Projects save as schema 9 with portable project identity and reusable source/scene definitions; versions 1–8 migrate explicitly, preserving their sampling. Saved empty viewport lists stay empty. Assigned-display fullscreen is available as a review prototype; see below.
 
 ## Assigned-display fullscreen (review prototype)
 
@@ -106,7 +124,7 @@ A dedicated producer thread uses a monotonic `Instant` clock and a target 60 Hz 
 
 All three views register/sample the same texture on the same wgpu device/queue; UV rectangles select the slices. Queue ordering serializes GPU writes and reads. After completing a frame, the producer notifies the operator and each enabled output independently. Outputs use deferred egui viewports, so repainting an output does not require an operator update. Pending repaint requests are coalesced; a minimized viewport does not accumulate a new repaint cause on every producer frame. egui may perform two UI passes per notification. Views sample the latest available texture through eframe's event loop. There is no per-window frame queue or guarantee that different windows present the same frame simultaneously. Slow GPU work can delay all views on this shared queue. The producer's GPU wait bounds its outstanding submissions but is not a real-time scheduler; OS sleep/App Nap and display refresh may affect pacing. UI responsiveness still affects presentation, though it does not supply the producer clock.
 
-This is an opaque SDR diagnostic pattern, not a calibrated media color pipeline. Projection uses nearest sampling and aspect-fit mapping; physical-pixel alignment at arbitrary Retina scales/window sizes needs visual verification. That original baseline has no fullscreen display assignment, genlock, calibrated frame timing, persistence, editor, media decoding, capture, audio, NDI, DeckLink or slide engine. The separate canvas editor adds still images, text and project persistence; it does not add video decoding or those output integrations. Minimize/restore visual acceptance remains pending; see the regression findings in the development-status document.
+This is an opaque SDR diagnostic pattern, not a calibrated media color pipeline. Projection uses nearest sampling and aspect-fit mapping; physical-pixel alignment at arbitrary Retina scales/window sizes needs visual verification. That original baseline has no fullscreen display assignment, genlock, calibrated frame timing, persistence, editor, media decoding, capture, audio, NDI, DeckLink or slide engine. The separate canvas editor now adds images/text, capture, file video/GIF, scenes, persistence and assigned Mac displays; see the current guide above. Other output SDKs remain future work. Minimize/restore visual acceptance remains pending; see the regression findings in the development-status document.
 
 ## Minimize/restore diagnostics
 

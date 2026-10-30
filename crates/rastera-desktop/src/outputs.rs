@@ -133,8 +133,14 @@ impl Destinations {
     pub fn new() -> Self {
         let path = std::env::args()
             .find_map(|a| {
-                a.strip_prefix("--editor-probe=")
+                a.strip_prefix("--session-dir=")
                     .map(|p| PathBuf::from(p).join("outputs.local.json"))
+            })
+            .or_else(|| {
+                std::env::args().find_map(|a| {
+                    a.strip_prefix("--editor-probe=")
+                        .map(|p| PathBuf::from(p).join("outputs.local.json"))
+                })
             })
             .unwrap_or_else(|| {
                 PathBuf::from(std::env::var_os("HOME").unwrap_or_default())

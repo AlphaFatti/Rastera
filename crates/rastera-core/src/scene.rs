@@ -220,6 +220,9 @@ impl Document {
     }
     pub fn add_media(&mut self, asset: crate::media::Asset) -> Result<Id, String> {
         crate::media::validate_asset(&asset)?;
+        if self.layers.len() >= 128 {
+            return Err("Scene layer limit reached (128)".into());
+        }
         if self.playbacks.len() >= 4 {
             return Err("Media limit: four playback instances".into());
         }

@@ -75,7 +75,7 @@ impl Probe {
             return false;
         }
         if let Some(media) = &mut self.media {
-            return match media.tick(e, enabled) {
+            return match media.tick(e, preview, enabled) {
                 Ok(done) => done,
                 Err(error) => {
                     log(format!("media_probe failed=1 error={error}\n"));

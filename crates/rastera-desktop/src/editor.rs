@@ -195,6 +195,7 @@ impl Editor {
             .as_ref()
             .map(|s| s.document.clone())
             .unwrap_or_default();
+        let startup_warning = session.warning.clone();
         let live_scene = doc.active_scene;
         let revision = engine.submit(doc.clone());
         let mut editor = Self {
@@ -240,7 +241,7 @@ impl Editor {
             pending_load: None,
             project: restore.as_ref().and_then(|s| s.project.clone()),
             saved: restore.as_ref().and_then(|s| s.saved.clone()),
-            error: None,
+            error: startup_warning,
             probe: std::env::args().find_map(|a| {
                 a.strip_prefix("--editor-probe=")
                     .map(|p| probe::Probe::new(PathBuf::from(p)))
@@ -1280,12 +1281,12 @@ impl Editor {
                             ui.add_enabled_ui(!loading&&!layer.locked,|ui|{
                                 ui.separator();ui.label("Source crop · pixels");
                                 ui.checkbox(&mut self.crop_edit,"Edit crop with corner handles");
-                                let mut crop=layer.crop;
+                                let mut crop=layer.crop;let mut crop_changed=false;
                                 let mut margins=[crop.left*size[0] as f32,crop.top*size[1] as f32,(1.-crop.right)*size[0] as f32,(1.-crop.bottom)*size[1] as f32];
-                                for(i,label)in ["Left","Top","Right","Bottom"].into_iter().enumerate(){ui.horizontal(|ui|{ui.label(label);let r=ui.add(egui::DragValue::new(&mut margins[i]).speed(1.).range(0.0..=size[i%2] as f32-1.));ended|=r.drag_stopped()||r.lost_focus();});}
+                                for(i,label)in ["Left","Top","Right","Bottom"].into_iter().enumerate(){ui.horizontal(|ui|{ui.label(label);let r=ui.add(egui::DragValue::new(&mut margins[i]).speed(1.).range(0.0..=size[i%2] as f32-1.));crop_changed|=r.changed();ended|=r.drag_stopped()||r.lost_focus();});}
                                 crop.left=margins[0]/size[0] as f32;crop.top=margins[1]/size[1] as f32;crop.right=1.-margins[2]/size[0] as f32;crop.bottom=1.-margins[3]/size[1] as f32;
-                                if ui.button("Reset Crop").clicked(){crop=rastera_core::crop::Crop::default();ended=true;}
-                                if crop!=layer.crop{if let Err(e)=layer.set_crop(crop){ui.colored_label(egui::Color32::YELLOW,e);}}
+                                if ui.button("Reset Crop").clicked(){crop=rastera_core::crop::Crop::default();crop_changed=true;ended=true;}
+                                if crop_changed&&crop!=layer.crop{if let Err(e)=layer.set_crop(crop){ui.colored_label(egui::Color32::YELLOW,e);}}
                                 ui.small("Crop removes pixels without stretching. Turn crop editing off to resize.");
                             });
                         }

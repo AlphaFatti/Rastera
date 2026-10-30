@@ -8,3 +8,7 @@ Rastera's UI and canvas text use the default font definitions from epaint / epai
 - emoji-icon-font: MIT — [full notice](docs/licenses/fonts/emoji-icon-font-mit-license.txt).
 
 These notices cover the default fallback fonts as well as the primary canvas font. Font licensing is distinct from Rastera's application source-license decision, which remains pending. See the dependency packages for their software licenses.
+
+## Media decoding
+
+The pinned image-rs 0.25.10 GIF feature uses gif 0.14.2 and color_quant 1.1.0. MIT notices: [image](docs/licenses/media/image-MIT.txt), [gif](docs/licenses/media/gif-MIT.txt), [color_quant](docs/licenses/media/color_quant-MIT.txt). No dependency versions were upgraded for this feature. AVFoundation codecs are provided by macOS. ffmpeg is optional synthetic-fixture tooling, not linked or bundled with Rastera.

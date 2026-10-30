@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -96,6 +96,7 @@ struct State {
 pub struct Slot {
     state: Mutex<State>,
     pub epoch: AtomicU64,
+    pub restart: AtomicBool,
     uploaded: AtomicU64,
 }
 #[derive(Clone, Debug)]
@@ -122,6 +123,7 @@ impl Slot {
                 negotiated_fps: 0.,
             }),
             epoch: AtomicU64::new(0),
+            restart: AtomicBool::new(false),
             uploaded: AtomicU64::new(0),
         }
     }

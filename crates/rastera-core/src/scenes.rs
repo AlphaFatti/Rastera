@@ -55,6 +55,13 @@ pub fn validate(d: &Document) -> Result<(), String> {
 }
 impl Document {
     pub fn add_scene(&mut self, duplicate: bool) -> Result<u64, String> {
+        let mut candidate = self.clone();
+        let id = candidate.allocate_scene(duplicate)?;
+        candidate.validate()?;
+        *self = candidate;
+        Ok(id)
+    }
+    fn allocate_scene(&mut self, duplicate: bool) -> Result<u64, String> {
         if self.scenes.len() >= 16 {
             return Err("Scene limit reached (16)".into());
         }
@@ -203,5 +210,20 @@ mod migration_tests {
         assert_eq!(d.playbacks.len(), 1);
         assert_eq!(d.media_assets.len(), 1);
         assert!(d.validate().is_ok());
+    }
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+    #[test]
+    fn scene_limit_rejects_without_mutation() {
+        let mut d = Document::default();
+        while d.scenes.len() < 16 {
+            d.add_scene(false).unwrap();
+        }
+        let before = d.clone();
+        assert!(d.add_scene(true).is_err());
+        assert_eq!(d, before);
     }
 }

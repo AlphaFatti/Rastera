@@ -2,6 +2,8 @@
 
 ## 0.0.2-dev — capture-device review work
 
+- Added per-layer source crops, native muted video/streaming GIF playback, canvas backgrounds, quick scenes and bounded startup recovery with opt-in exact output restoration. Schema 9 migrates existing projects. See docs/media-scenes.md for actual automated/native results and pending human/hardware checks.
+
 - AVFoundation video sources as shared ordinary canvas layers, with bounded BGRA uploads, mode/device selection, source status, lifecycle sharing and schema-5 projects.
 - Signed Rastera.app development bundle with stable camera identity/usage description/entitlement and explicit consent action.
 - Real FaceTime HD Camera and OBS Virtual Camera tested together; user confirmed moving pictures/overlays in windowed and fullscreen outputs. Physical unplug/replug and a second physical device remain pending. No audio, DeckLink SDK or zero-copy capture claim.

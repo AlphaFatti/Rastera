@@ -33,6 +33,8 @@ struct LiveImage {
     persistent: bool,
 }
 struct Prepared {
+    scene_identity: (String, u64),
+    restart_cues: Vec<Arc<crate::capture::Slot>>,
     captures: Vec<LiveImage>,
     revision: u64,
     background: bool,
@@ -388,6 +390,15 @@ impl SceneFeed {
         if let Ok(mut ready) = self.shared.ready.try_lock() {
             if let Some(scene) = ready.take() {
                 if scene.revision == self.shared.desired.load(Ordering::Acquire) {
+                    if self
+                        .current
+                        .as_ref()
+                        .is_some_and(|s| s.scene_identity != scene.scene_identity)
+                    {
+                        for cue in &scene.restart_cues {
+                            cue.restart.store(true, Ordering::Release);
+                        }
+                    }
                     self.capture_uploads.clear();
                     self.current = Some(scene);
                 }
@@ -777,6 +788,31 @@ fn prepare(
     Ok(Prepared {
         captures,
         revision: 0,
+        scene_identity: (doc.project_id.clone(), doc.active_scene),
+        restart_cues: {
+            let ids: HashSet<_> = doc
+                .layers
+                .iter()
+                .filter_map(|l| {
+                    if let Content::Media(id) = l.content {
+                        Some(id)
+                    } else {
+                        None
+                    }
+                })
+                .chain(
+                    if let crate::background::Background::Media { source, .. } = doc.background {
+                        Some(source)
+                    } else {
+                        None
+                    },
+                )
+                .collect();
+            ids.into_iter()
+                .filter(|id| doc.playbacks[id].restart_on_activation)
+                .map(|id| hub.slot(&crate::media::key(&doc.project_id, id)))
+                .collect()
+        },
         background: doc.test_background,
         clear: if let crate::background::Background::Solid(c) = doc.background {
             c

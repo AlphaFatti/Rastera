@@ -13,3 +13,6 @@ epaint = { version = "=0.31.1", features = ["default_fonts"] }
 ttf-parser = "=0.25.1"
 
 getrandom = "=0.4.3"
+
+[dev-dependencies]
+gif = "=0.14.2"

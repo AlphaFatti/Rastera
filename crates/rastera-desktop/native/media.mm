@@ -1,3 +1,4 @@
+#include <cmath>
 #import <AVFoundation/AVFoundation.h>
 #import <CoreVideo/CoreVideo.h>
 #import <QuartzCore/QuartzCore.h>
@@ -5,10 +6,11 @@ extern "C" void rastera_media_pixels(void*,uint32_t,uint32_t,size_t,const uint8_
 static NSDictionary *probe(NSString *path){
  AVURLAsset *asset=[AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:path] options:@{AVURLAssetPreferPreciseDurationAndTimingKey:@YES}];
  AVAssetTrack *track=[[asset tracksWithMediaType:AVMediaTypeVideo] firstObject];
- if(!track||!asset.playable)return @{@"error":@"AVFoundation cannot play this local file (missing/unsupported video)"};
+ if(!track||!asset.playable||asset.hasProtectedContent)return @{@"error":@"AVFoundation cannot play this local file (missing/unsupported video)"};
+ double duration=CMTimeGetSeconds(asset.duration);if(!std::isfinite(duration)||duration<=0)return @{@"error":@"Video requires a finite positive duration"};
  CGRect rect=CGRectApplyAffineTransform(CGRectMake(0,0,track.naturalSize.width,track.naturalSize.height),track.preferredTransform);
  for(id desc in track.formatDescriptions){NSDictionary *ext=(__bridge NSDictionary*)CMFormatDescriptionGetExtensions((__bridge CMFormatDescriptionRef)desc);NSString *tf=ext[(__bridge NSString*)kCVImageBufferTransferFunctionKey];if([tf containsString:@"2084"]||[tf containsString:@"HLG"])return @{@"error":@"HDR video is not supported in this SDR milestone"};}
- return @{@"size":@[@(llround(fabs(rect.size.width))),@(llround(fabs(rect.size.height)))],@"duration":@(CMTimeGetSeconds(asset.duration)),@"gif":@NO,@"path":path};
+ return @{@"size":@[@(llround(fabs(rect.size.width))),@(llround(fabs(rect.size.height)))],@"duration":@(duration),@"gif":@NO,@"path":path};
 }
 extern "C" char *rastera_video_probe(const char *path){@autoreleasepool{NSDictionary *data=probe(@(path));NSData *json=[NSJSONSerialization dataWithJSONObject:data options:0 error:nil];return strdup([[NSString alloc]initWithData:json encoding:NSUTF8StringEncoding].UTF8String);}}
 @interface RasteraFileVideo:NSObject

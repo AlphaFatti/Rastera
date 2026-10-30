@@ -1,5 +1,13 @@
 # Rastera development status
 
+## Media, cropping, scenes and recovery — current review work
+
+`feature/media-scenes` starts at c813e6a; v0.0.1 is unchanged and workspace/app development version remains 0.0.2-dev. Sequential commits add per-instance picture crops; AVFoundation file video and streaming image-rs GIF playback; solid/image/video backgrounds; persistent quick scenes with latest-request frame-boundary cuts; and bounded atomic session recovery. Project schema 9 explicitly migrates v1–v8, retaining project/source/layer/viewport identity. The native shared-canvas producer/lease path, signed camera identity, existing controls and Disable All Outputs remain. [Full implementation and verification record](media-scenes.md).
+
+Required fmt/check/test/Clippy, locked workspace release build, signed bundle/plist verification and nine Python tests pass. There are 65 successful Rust test executions. The owned native suite passes crop handle routing/one-entry Undo/Redo, H.264/GIF/camera/image/text, three backgrounds, latest scene cuts, producer-side restart, windowed/external fullscreen, two operator transitions, save/reopen, fresh-process recovery, opt-in exact output restoration and startup overrides; all owned shutdowns drain capture and 0/4 leases. A separate signed review app is open. The user confirmed “Pictures and scene changes look correct” for the review composition; broader control/codec/hardware and continuity acceptance remains pending. A UI overhaul is deferred at the user’s request.
+
+Automated checks and native replay are distinct from human picture acceptance. Existing operator-transition/capture-conditioned stalls, hardware compatibility/color calibration, sustained performance and production acceptance remain pending. Historical checkpoint records below retain their original scope and counts; they are not the current schema/feature inventory.
+
 **Acceptance blocked: the native minimize/restore transition stall remains reproduced.**
 
 This WIP checkpoint does not signify milestone acceptance. Individual native transitions were exercised; the stricter all-window automation check remains unverified. Automated checks pass, as detailed below.

@@ -1813,6 +1813,7 @@ version = "0.0.2-dev"
 dependencies = [
  "epaint",
  "getrandom",
+ "gif",
  "image",
  "serde",
  "serde_json",

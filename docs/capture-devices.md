@@ -1,5 +1,7 @@
 # Capture devices — 0.0.2-dev review milestone
 
+[Media/scenes work](media-scenes.md) extends this historical schema-5 checkpoint with schema 9, file playback, crops and recovery. The device/copy measurements below retain their original scope.
+
 October 29, 2026. `feature/capture-devices` starts at the annotated `v0.0.1` development-preview checkpoint (`c3b2258`). Main remains unmerged. The user reports successful fullscreen operation for that checkpoint; specifically unverified display cases and earlier operator/capture-conditioned pause limits remain.
 
 ## Build and use Rastera.app

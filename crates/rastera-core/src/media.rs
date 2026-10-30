@@ -48,7 +48,7 @@ impl Control {
                 playing,
                 duration,
                 phase: "Loading".into(),
-                seek: None,
+                seek: Some(0.),
             }),
         }
     }
@@ -153,7 +153,12 @@ pub fn run_gif(
         while !stop.load(Ordering::Relaxed) {
             let (playing, seek) = {
                 let mut s = control.state.lock().unwrap();
-                (s.playing, s.seek.take())
+                let seek = if control.slot.restart.swap(false, Ordering::AcqRel) {
+                    Some(0.)
+                } else {
+                    s.seek.take()
+                };
+                (s.playing, seek)
             };
             let position = clock.tick(playing, seek);
             if position < last || seek.is_some() {
@@ -377,4 +382,57 @@ pub fn gif_plays(path: &std::path::Path) -> Result<Option<u32>, String> {
         }
     }
     parse(&mut r).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod disposal_tests {
+    use super::*;
+    use image::AnimationDecoder;
+    use std::borrow::Cow;
+    #[test]
+    fn partial_frames_restore_previous_and_background() {
+        let path =
+            std::env::temp_dir().join(format!("rastera-disposal-{}.gif", std::process::id()));
+        let mut bytes = vec![];
+        {
+            let mut e = gif::Encoder::new(
+                &mut bytes,
+                3,
+                1,
+                &[255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0],
+            )
+            .unwrap();
+            e.set_repeat(gif::Repeat::Infinite).unwrap();
+            for (left, width, pixels, dispose) in [
+                (0, 3, vec![0, 0, 0], gif::DisposalMethod::Keep),
+                (1, 1, vec![1], gif::DisposalMethod::Previous),
+                (2, 1, vec![2], gif::DisposalMethod::Background),
+                (0, 1, vec![1], gif::DisposalMethod::Keep),
+            ] {
+                let frame = gif::Frame {
+                    left,
+                    width,
+                    height: 1,
+                    delay: 3,
+                    dispose,
+                    buffer: Cow::Owned(pixels),
+                    ..Default::default()
+                };
+                e.write_frame(&frame).unwrap();
+            }
+        }
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(gif_plays(&path).unwrap(), None);
+        let f: Vec<_> = gif_decoder(&path)
+            .unwrap()
+            .into_frames()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(f.len(), 4);
+        assert_eq!(f[1].buffer().get_pixel(1, 0).0, [0, 255, 0, 255]);
+        assert_eq!(f[2].buffer().get_pixel(1, 0).0, [255, 0, 0, 255]);
+        assert_eq!(f[3].buffer().get_pixel(2, 0)[3], 0);
+        assert!((delay_seconds(f[1].delay()) - 0.03).abs() < 0.00001);
+        std::fs::remove_file(path).unwrap();
+    }
 }

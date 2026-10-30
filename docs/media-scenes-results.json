@@ -1,0 +1,77 @@
+{
+  "combined": true,
+  "camera": true,
+  "native_crop_undo_redo": true,
+  "minimize_events": [
+    {
+      "cycle": 0,
+      "command": "minimize",
+      "start": 477776.466411583,
+      "return": 477777.180930875
+    },
+    {
+      "cycle": 0,
+      "command": "restore",
+      "start": 477777.784610583,
+      "return": 477777.94907075
+    },
+    {
+      "cycle": 1,
+      "command": "minimize",
+      "start": 477778.551087875,
+      "return": 477779.283865916
+    },
+    {
+      "cycle": 1,
+      "command": "restore",
+      "start": 477779.893943875,
+      "return": 477780.050696041
+    }
+  ],
+  "physical_picture_verified": false,
+  "native_drain": true,
+  "cold": true,
+  "enabled": true,
+  "no-restore": true,
+  "explicit": true,
+  "date": "2026-10-30",
+  "version": "0.0.2-dev",
+  "rust_test_executions": 65,
+  "python_tests": 9,
+  "tested_video": {
+    "container": "MP4",
+    "codec": "H.264",
+    "pixel_format": "yuv420p",
+    "size": [
+      320,
+      180
+    ],
+    "fps": 30,
+    "duration_seconds": 6
+  },
+  "tested_gif": {
+    "size": [
+      320,
+      180
+    ],
+    "fps": 5,
+    "duration_seconds": 2
+  },
+  "tested_camera": {
+    "name": "FaceTime HD Camera",
+    "actual_bgra": [
+      1280,
+      720
+    ],
+    "negotiated_fps": 30
+  },
+  "producer_scene_restart": true,
+  "human_review": "User confirmed: Pictures and scene changes look correct",
+  "limitations": [
+    "No physical scanout or screenshot motion measurement",
+    "Existing operator/capture-conditioned pauses remain",
+    "Broader codecs, end-state pictures, disconnected hardware and endurance pending"
+  ],
+  "human_scope": "Response to the new review composition in windowed/fullscreen pictures; no claim of every crop/control/codec or hardware case",
+  "ui_feedback": "User dislikes the UI; overhaul deferred to a later planning task"
+}
