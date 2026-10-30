@@ -72,12 +72,14 @@ impl Drop for Worker {
 pub struct Media {
     hub: Arc<rastera_core::capture::Hub>,
     workers: BTreeMap<String, Worker>,
+    active: Option<(String, u64)>,
 }
 impl Media {
     pub fn new(hub: Arc<rastera_core::capture::Hub>) -> Self {
         Self {
             hub,
             workers: BTreeMap::new(),
+            active: None,
         }
     }
     pub fn control(&self, d: &Document, id: Id) -> Option<Arc<Control>> {
@@ -86,6 +88,26 @@ impl Media {
             .map(|w| w.control.clone())
     }
     pub fn reconcile(&mut self, d: &Document) {
+        let activation = Some((d.project_id.clone(), d.active_scene));
+        if self.active != activation {
+            for l in &d.layers {
+                if let rastera_core::scene::Content::Media(id) = l.content {
+                    if d.playbacks[&id].restart_on_activation {
+                        if let Some(c) = self.control(d, id) {
+                            c.state.lock().unwrap().seek = Some(0.);
+                        }
+                    }
+                }
+            }
+            if let rastera_core::background::Background::Media { source, .. } = d.background {
+                if d.playbacks[&source].restart_on_activation {
+                    if let Some(c) = self.control(d, source) {
+                        c.state.lock().unwrap().seek = Some(0.);
+                    }
+                }
+            }
+            self.active = activation;
+        }
         let wanted: BTreeMap<_, _> = d
             .playbacks
             .iter()

@@ -83,15 +83,14 @@ pub struct Document {
     pub viewports: Vec<crate::mapping::Viewport>,
     pub next_viewport_id: u64,
     pub next_id: Id,
-    pub test_background: bool,
-    pub background: crate::background::Background,
+    pub scenes: Vec<crate::scenes::Scene>,
+    pub active_scene: u64,
+    pub next_scene_id: u64,
     pub images: BTreeMap<Id, ImageAsset>,
     pub texts: BTreeMap<Id, TextObject>,
     pub captures: BTreeMap<Id, crate::capture::Source>,
     pub media_assets: BTreeMap<Id, crate::media::Asset>,
     pub playbacks: BTreeMap<Id, crate::media::Playback>,
-    /// Bottom to top. Layer IDs remain stable through edits/reordering/save/load.
-    pub layers: Vec<Layer>,
 }
 /// Portable document identity; destinations themselves are machine-local, never in this model.
 fn new_project_id() -> String {
@@ -102,20 +101,20 @@ fn new_project_id() -> String {
 impl Default for Document {
     fn default() -> Self {
         Self {
-            version: 8,
+            version: 9,
             project_id: new_project_id(),
             canvas: [WIDTH, HEIGHT],
             viewports: crate::mapping::defaults(),
             next_viewport_id: 3,
             next_id: 1,
-            test_background: false,
-            background: crate::background::Background::default(),
+            scenes: vec![crate::scenes::Scene::default()],
+            active_scene: 1,
+            next_scene_id: 2,
             images: BTreeMap::new(),
             texts: BTreeMap::new(),
             captures: BTreeMap::new(),
             media_assets: BTreeMap::new(),
             playbacks: BTreeMap::new(),
-            layers: vec![],
         }
     }
 }
@@ -272,7 +271,7 @@ impl Document {
             .captures
             .get_mut(&id)
             .ok_or("Capture definition no longer exists")? = source;
-        for layer in &mut self.layers {
+        for layer in self.scenes.iter_mut().flat_map(|s| s.layers.iter_mut()) {
             if !layer.locked
                 && layer.aspect_lock
                 && matches!(layer.content,Content::Capture(source) if source==id)
@@ -324,56 +323,45 @@ impl Document {
         self.layers.insert(index + 1, layer);
         Some(new)
     }
+    pub fn all_layers(&self) -> impl Iterator<Item = &Layer> {
+        self.scenes.iter().flat_map(|s| s.layers.iter())
+    }
     pub fn prune_unused(&mut self) {
-        let images: BTreeSet<_> = self
-            .layers
-            .iter()
-            .filter_map(|l| {
-                if let Content::Image(id) = l.content {
-                    Some(id)
-                } else {
-                    None
+        let mut images = BTreeSet::new();
+        let mut texts = BTreeSet::new();
+        let mut captures = BTreeSet::new();
+        let mut media = BTreeSet::new();
+        for l in self.all_layers() {
+            match l.content {
+                Content::Image(id) => {
+                    images.insert(id);
                 }
-            })
-            .collect();
-        let texts: BTreeSet<_> = self
-            .layers
-            .iter()
-            .filter_map(|l| {
-                if let Content::Text(id) = l.content {
-                    Some(id)
-                } else {
-                    None
+                Content::Text(id) => {
+                    texts.insert(id);
                 }
-            })
-            .collect();
-        let background = self.background.clone();
-        self.images.retain(|id, _| images.contains(id)||matches!(background,crate::background::Background::Image{source,..}if source==*id));
+                Content::Capture(id) => {
+                    captures.insert(id);
+                }
+                Content::Media(id) => {
+                    media.insert(id);
+                }
+            }
+        }
+        for s in &self.scenes {
+            match s.background {
+                crate::background::Background::Image { source, .. } => {
+                    images.insert(source);
+                }
+                crate::background::Background::Media { source, .. } => {
+                    media.insert(source);
+                }
+                _ => {}
+            }
+        }
+        self.images.retain(|id, _| images.contains(id));
         self.texts.retain(|id, _| texts.contains(id));
-        let captures: BTreeSet<_> = self
-            .layers
-            .iter()
-            .filter_map(|l| {
-                if let Content::Capture(id) = l.content {
-                    Some(id)
-                } else {
-                    None
-                }
-            })
-            .collect();
         self.captures.retain(|id, _| captures.contains(id));
-        let media: BTreeSet<_> = self
-            .layers
-            .iter()
-            .filter_map(|l| {
-                if let Content::Media(id) = l.content {
-                    Some(id)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        self.playbacks.retain(|id, _| media.contains(id)||matches!(background,crate::background::Background::Media{source,..}if source==*id));
+        self.playbacks.retain(|id, _| media.contains(id));
         let assets: BTreeSet<_> = self.playbacks.values().map(|p| p.asset).collect();
         self.media_assets.retain(|id, _| assets.contains(id));
     }
@@ -403,8 +391,8 @@ impl Document {
             .map(|l| l.id)
     }
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != 8 {
-            return Err("Unsupported project version (expected v8)".into());
+        if self.version != 9 {
+            return Err("Unsupported project version (expected v9)".into());
         }
         if self.project_id.len() != 32 || !self.project_id.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("Invalid project identity".into());
@@ -424,7 +412,11 @@ impl Document {
                     .into(),
             );
         }
-        if self.layers.len() > 128 || self.images.len() > 256 || self.texts.len() > 256 {
+        crate::scenes::validate(self)?;
+        if self.scenes.iter().any(|s| s.layers.len() > 128)
+            || self.images.len() > 256
+            || self.texts.len() > 256
+        {
             return Err("Project object limit exceeded".into());
         }
         let mut ids = BTreeSet::new();
@@ -479,21 +471,23 @@ impl Document {
                 return Err("Invalid playback/asset reference".into());
             }
         }
-        match self.background {
-            crate::background::Background::Image { source, .. }
-                if !self.images.contains_key(&source) =>
-            {
-                return Err("Missing background image reference".into())
+        for scene in &self.scenes {
+            match scene.background {
+                crate::background::Background::Image { source, .. }
+                    if !self.images.contains_key(&source) =>
+                {
+                    return Err("Missing background image reference".into())
+                }
+                crate::background::Background::Media { source, .. }
+                    if !self.playbacks.contains_key(&source) =>
+                {
+                    return Err("Missing background playback reference".into())
+                }
+                _ => {}
             }
-            crate::background::Background::Media { source, .. }
-                if !self.playbacks.contains_key(&source) =>
-            {
-                return Err("Missing background playback reference".into())
-            }
-            _ => {}
         }
         let mut used_images = BTreeSet::new();
-        for l in &self.layers {
+        for l in self.all_layers() {
             let r = l.rect;
             l.crop.validate()?;
             if matches!(l.content, Content::Text(_)) && l.crop != crate::crop::Crop::default() {
@@ -667,6 +661,7 @@ impl History {
     }
     pub fn undo(&mut self, doc: &mut Document) -> bool {
         if let Some(mut prev) = self.undo.pop() {
+            prev.next_scene_id = prev.next_scene_id.max(doc.next_scene_id);
             prev.next_id = prev.next_id.max(doc.next_id);
             prev.next_viewport_id = prev.next_viewport_id.max(doc.next_viewport_id);
             self.redo.push(std::mem::replace(doc, prev));
@@ -677,6 +672,7 @@ impl History {
     }
     pub fn redo(&mut self, doc: &mut Document) -> bool {
         if let Some(mut next) = self.redo.pop() {
+            next.next_scene_id = next.next_scene_id.max(doc.next_scene_id);
             next.next_id = next.next_id.max(doc.next_id);
             next.next_viewport_id = next.next_viewport_id.max(doc.next_viewport_id);
             self.undo.push(std::mem::replace(doc, next));
@@ -781,7 +777,7 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
             value["viewports"] = serde_json::to_value(crate::mapping::defaults()).unwrap();
         }
         Some(2) => {}
-        Some(3) | Some(4) | Some(5) | Some(6) | Some(7) | Some(8) => {}
+        Some(3) | Some(4) | Some(5) | Some(6) | Some(7) | Some(8) | Some(9) => {}
         _ => return Err("Unsupported project schema version".into()),
     }
     if value["version"].as_u64().is_some_and(|v| v < 3) {
@@ -832,6 +828,16 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
         value["background"] =
             serde_json::to_value(crate::background::Background::default()).unwrap();
         value["version"] = 8.into();
+    }
+    if value["version"] == 8 {
+        let object = value.as_object_mut().ok_or("Invalid legacy document")?;
+        let layers = object.remove("layers").ok_or("Missing legacy layers")?;
+        let background = object.remove("background").unwrap();
+        let diagnostic = object.remove("test_background").unwrap();
+        object.insert("scenes".into(),serde_json::json!([{"id":1,"name":"Scene 1","layers":layers,"background":background,"test_background":diagnostic}]));
+        object.insert("active_scene".into(), 1.into());
+        object.insert("next_scene_id".into(), 2.into());
+        object.insert("version".into(), 9.into());
     }
     let mut doc: Document = serde_json::from_value(value).map_err(|e| e.to_string())?;
     doc.validate()?;
@@ -1088,7 +1094,7 @@ mod tests {
         let path = dir.join("show.json");
         let mut original = Document::default();
         let id = original.add_text();
-        let mut legacy = serde_json::to_value(&original).unwrap();
+        let mut legacy = crate::scenes::legacy_value(&original);
         legacy["version"] = 1.into();
         legacy.as_object_mut().unwrap().remove("viewports");
         legacy.as_object_mut().unwrap().remove("next_viewport_id");

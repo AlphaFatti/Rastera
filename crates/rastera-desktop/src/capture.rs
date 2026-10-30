@@ -175,7 +175,7 @@ impl Capture {
         if self.refreshed.elapsed() > Duration::from_secs(1) {
             self.refresh();
         }
-        let desired:BTreeMap<_,_>=doc.captures.iter().filter(|(id,_)|doc.layers.iter().any(|l|matches!(l.content,rastera_core::scene::Content::Capture(source) if source==**id))).map(|(&id,c)|(Hub::key(&doc.project_id,id),c.clone())).collect();
+        let desired:BTreeMap<_,_>=doc.captures.iter().filter(|(id,_)|doc.all_layers().any(|l|matches!(l.content,rastera_core::scene::Content::Capture(source) if source==**id))).map(|(&id,c)|(Hub::key(&doc.project_id,id),c.clone())).collect();
         let retired: Vec<_> = self
             .sessions
             .iter()

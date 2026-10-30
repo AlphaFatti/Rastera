@@ -171,7 +171,7 @@ fn v1_v2_migration_and_empty_custom_round_trips() {
     let mut doc = Document::default();
     doc.add_text();
     for version in [1, 2] {
-        let mut legacy = serde_json::to_value(&doc).unwrap();
+        let mut legacy = crate::scenes::legacy_value(&doc);
         legacy["version"] = version.into();
         legacy.as_object_mut().unwrap().remove("next_viewport_id");
         if version == 1 {
@@ -186,7 +186,7 @@ fn v1_v2_migration_and_empty_custom_round_trips() {
         }
         std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
         let loaded = scene::load_project(&path).unwrap();
-        assert_eq!(loaded.version, 8);
+        assert_eq!(loaded.version, 9);
         assert_eq!(loaded.next_viewport_id, 3);
         assert_eq!(loaded.viewports[0].size, [1920, 1080]);
         assert_eq!(loaded.layers, doc.layers);
@@ -281,12 +281,12 @@ fn v3_identity_migration_preserves_sampling_and_v4_identity_roundtrips() {
     original.viewports[0].zoom = 0.75;
     original.viewports[0].rotation = 30.;
     assert_ne!(original.project_id, Document::default().project_id);
-    let mut value = serde_json::to_value(&original).unwrap();
+    let mut value = crate::scenes::legacy_value(&original);
     value["version"] = 3.into();
     value.as_object_mut().unwrap().remove("project_id");
     std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
     let migrated = scene::load_project(&path).unwrap();
-    assert_eq!(migrated.version, 8);
+    assert_eq!(migrated.version, 9);
     assert_eq!(migrated.viewports, original.viewports);
     assert_eq!(migrated.next_viewport_id, original.next_viewport_id);
     assert_eq!(migrated.project_id.len(), 32);

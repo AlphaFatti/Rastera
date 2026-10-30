@@ -116,3 +116,5 @@ pub mod crop;
 pub mod media;
 
 pub mod background;
+
+pub mod scenes;

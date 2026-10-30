@@ -395,12 +395,12 @@ mod document_tests {
         std::fs::create_dir_all(&folder).unwrap();
         let path = folder.join("show.json");
         let original = Document::default();
-        let mut legacy = serde_json::to_value(&original).unwrap();
+        let mut legacy = crate::scenes::legacy_value(&original);
         legacy["version"] = 4.into();
         legacy.as_object_mut().unwrap().remove("captures");
         std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
         let mut doc = crate::scene::load_project(&path).unwrap();
-        assert_eq!(doc.version, 8);
+        assert_eq!(doc.version, 9);
         assert!(doc.captures.is_empty());
         assert_eq!(doc.project_id, original.project_id);
         doc.add_capture(source()).unwrap();

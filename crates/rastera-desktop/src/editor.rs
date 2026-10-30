@@ -153,6 +153,7 @@ pub(super) struct Editor {
     history: History,
     gesture: Option<Gesture>,
     crop_edit: bool,
+    live_scene: u64,
     inspector_before: Option<Document>,
     revision: u64,
     files: Files,
@@ -210,6 +211,7 @@ impl Editor {
             history: History::default(),
             gesture: None,
             crop_edit: false,
+            live_scene: 1,
             inspector_before: None,
             revision,
             files: Files::new(),
@@ -271,6 +273,9 @@ impl Editor {
         }
     }
     fn poll(&mut self) {
+        if self.engine.applied() >= self.revision {
+            self.live_scene = self.doc.active_scene;
+        }
         if let Ok(result) = self.files.rx.try_recv() {
             self.busy_file = false;
             match result {
@@ -654,6 +659,91 @@ impl Editor {
             self.history.record(before, &self.doc);
             self.publish();
         }
+        let scenes_before = self.doc.clone();
+        let mut scene_action = None;
+        egui::TopBottomPanel::top("quick_scenes").show(ctx, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Quick Scenes · Cut");
+                for scene in &self.doc.scenes {
+                    let label = format!(
+                        "{}{}",
+                        if scene.id == self.live_scene {
+                            "● "
+                        } else {
+                            ""
+                        },
+                        scene.name
+                    );
+                    if ui
+                        .selectable_label(scene.id == self.doc.active_scene, label)
+                        .clicked()
+                    {
+                        scene_action = Some((0, scene.id));
+                    }
+                }
+                if ui.button("Add Scene").clicked() {
+                    scene_action = Some((1, 0));
+                }
+                if ui.button("Duplicate Scene").clicked() {
+                    scene_action = Some((2, 0));
+                }
+                if ui
+                    .add_enabled(self.doc.scenes.len() > 1, egui::Button::new("Delete Scene"))
+                    .clicked()
+                {
+                    scene_action = Some((3, self.doc.active_scene));
+                }
+                if ui.button("Scene ←").clicked() {
+                    scene_action = Some((4, self.doc.active_scene));
+                }
+                if ui.button("Scene →").clicked() {
+                    scene_action = Some((5, self.doc.active_scene));
+                }
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.doc.name)
+                        .char_limit(128)
+                        .desired_width(120.),
+                );
+                if self.engine.applied() != self.revision {
+                    ui.label("Preparing complete composition…");
+                }
+            });
+        });
+        if let Some((action, id)) = scene_action {
+            self.finish_gesture();
+            self.finish_view_gesture();
+            self.finish_inspector();
+            match action {
+                0 => {
+                    self.doc.select_scene(id);
+                }
+                1 | 2 => {
+                    if let Err(e) = self.doc.add_scene(action == 2) {
+                        self.error = Some(e);
+                    }
+                }
+                3 => {
+                    self.doc.remove_scene(id);
+                }
+                4 | 5 => {
+                    if let Some(i) = self.doc.scenes.iter().position(|s| s.id == id) {
+                        let j = if action == 4 {
+                            i.saturating_sub(1)
+                        } else {
+                            (i + 1).min(self.doc.scenes.len() - 1)
+                        };
+                        self.doc.scenes.swap(i, j);
+                    }
+                }
+                _ => {}
+            }
+            self.selected = None;
+            self.crop_edit = false;
+        }
+        if self.doc != scenes_before {
+            self.history.record(scenes_before, &self.doc);
+            self.publish();
+        }
         let background_before = self.doc.clone();
         egui::TopBottomPanel::bottom("canvas_background").show(ctx, |ui| {
             use rastera_core::background::{Background, Fit};
@@ -1012,6 +1102,7 @@ if ui.button("Restart").clicked(){s.seek=Some(0.);s.playing=true;}let mut pos=s.
                             let p=self.doc.playbacks.get_mut(&id).unwrap();
                             egui::ComboBox::from_label("Loop").selected_text(format!("{:?}",p.looping)).show_ui(ui,|ui|{ui.selectable_value(&mut p.looping,None,"File default");ui.selectable_value(&mut p.looping,Some(true),"Loop");ui.selectable_value(&mut p.looping,Some(false),"Once");});
                             ui.horizontal(|ui|{ui.label("End");ui.selectable_value(&mut p.end,rastera_core::media::End::Hold,"Hold Last Frame");ui.selectable_value(&mut p.end,rastera_core::media::End::Black,"Black");});
+                            ui.checkbox(&mut p.restart_on_activation,"Restart when scene activates");
                             ui.small("Duplicate shares playback; Import creates an independent playhead. Video audio is muted.");
                         }
                         if let Content::Capture(id)=source {

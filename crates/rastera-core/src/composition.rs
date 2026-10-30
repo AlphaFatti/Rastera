@@ -387,8 +387,10 @@ impl SceneFeed {
     pub(crate) fn begin_frame(&mut self) -> Option<(Arc<Generation>, crate::mapping::FrameMeta)> {
         if let Ok(mut ready) = self.shared.ready.try_lock() {
             if let Some(scene) = ready.take() {
-                self.capture_uploads.clear();
-                self.current = Some(scene);
+                if scene.revision == self.shared.desired.load(Ordering::Acquire) {
+                    self.capture_uploads.clear();
+                    self.current = Some(scene);
+                }
             }
         }
         self.current
