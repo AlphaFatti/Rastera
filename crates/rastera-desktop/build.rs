@@ -51,6 +51,28 @@ fn main() {
             "-o",
         ])
         .arg(&media_object));
+    println!("cargo:rerun-if-changed=native/audio.mm");
+    let audio_object = out.join("audio.o");
+    run(Command::new("xcrun")
+        .args([
+            "--sdk",
+            "macosx",
+            "clang++",
+            "-std=c++17",
+            "-fobjc-arc",
+            "-fblocks",
+            "-mmacosx-version-min=14.0",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-Wno-unused-parameter",
+            "-Wno-deprecated-declarations",
+            "-O2",
+            "-c",
+            "native/audio.mm",
+            "-o",
+        ])
+        .arg(&audio_object));
     let object = out.join("shared_canvas.o");
     run(Command::new("xcrun")
         .args([
@@ -78,7 +100,8 @@ fn main() {
         .arg(out.join("librastera_shared_canvas.a"))
         .arg(object)
         .arg(capture_object)
-        .arg(media_object));
+        .arg(media_object)
+        .arg(audio_object));
     println!("cargo:rustc-link-search=native={}", out.display());
     println!("cargo:rustc-link-lib=static=rastera_shared_canvas");
     for framework in [
@@ -86,6 +109,8 @@ fn main() {
         "IOKit",
         "AVFoundation",
         "CoreMedia",
+        "CoreAudio",
+        "AudioToolbox",
         "CoreVideo",
         "QuartzCore",
         "Metal",

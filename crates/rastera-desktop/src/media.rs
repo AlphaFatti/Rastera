@@ -24,6 +24,8 @@ unsafe extern "C" {
         play: bool,
         seek: f64,
         pos: *mut f64,
+        position_host: *mut f64,
+        actual_rate: *mut f64,
     ) -> i32;
     fn rastera_video_destroy(h: *mut c_void);
 }
@@ -175,6 +177,8 @@ fn run_video(
     }
     let mut ctx = (control.clone(), asset.size, epoch);
     let mut ended = false;
+    let mut generation = 0u64;
+    let mut last: Option<(f64, f64, bool)> = None;
     while !stop.load(Ordering::Relaxed) {
         let (play, mut seek) = {
             let mut s = control.state.lock().unwrap();
@@ -201,6 +205,8 @@ fn run_video(
             }
         }
         let mut pos = 0.;
+        let mut host = 0.;
+        let mut actual_rate = 0.;
         let status = unsafe {
             rastera_video_step(
                 handle,
@@ -208,8 +214,29 @@ fn run_video(
                 play && !ended,
                 seek.unwrap_or(-1.),
                 &mut pos,
+                &mut host,
+                &mut actual_rate,
             )
         };
+        let clock_playing = play && !ended && status > 0 && actual_rate > 0.5;
+        if seek.is_some()
+            || last.is_some_and(|(p, h, playing)| {
+                (pos - p - if playing { host - h } else { 0. }).abs() > 0.1
+            })
+        {
+            generation += 1;
+        }
+        if pos.is_finite() {
+            control
+                .audio_clock
+                .store(rastera_audio::clock::Observation {
+                    sample: (pos * 48000.).round() as i64,
+                    host,
+                    playing: clock_playing,
+                    generation,
+                });
+            last = Some((pos, host, clock_playing));
+        }
         {
             let mut s = control.state.lock().unwrap();
             if pos.is_finite() {
@@ -224,7 +251,7 @@ fn run_video(
                 } else if status == 0 {
                     "Loading"
                 } else if play {
-                    "Playing · muted"
+                    "Playing · audio via mixer"
                 } else {
                     "Paused"
                 }

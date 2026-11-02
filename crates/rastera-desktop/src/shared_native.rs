@@ -1,3 +1,5 @@
+mod audio;
+mod audio_native;
 #[path = "capture.rs"]
 mod capture;
 #[path = "outputs.rs"]

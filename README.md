@@ -4,6 +4,17 @@ Rastera is a free, open-source live video and presentation application in early 
 
 The long-term [architecture blueprint](docs/architecture.md) describes planned work, not implemented capabilities. See [development status](docs/development-status.md) for the current scope and verification record. An application source license still needs to be selected before a public release.
 
+## Audio engine — current development review
+
+The operator now has an **Audio Mixer** with discrete file/capture inputs, configurable Stereo/Dual Mono/Dual Stereo/Quad Mono interpretation, per-strip DSP and ten stereo output buses patched to explicit Core Audio devices/channel pairs. Audio output activation always starts off. Use **Mute All Audio / Shift–Command–M** separately from video-output recovery. Video and its interpreted strips share one transport; there is no parallel AVPlayer monitoring.
+
+Projects use schema 11, migrating older visual projects to silent audio defaults. The requested video-output startup restoration is enabled in this Mac's installed profile and verified separately. [Signal flow, controls, limits and actual verification](docs/audio-engine.md) include remaining transition/loop/physical-sync limitations; this is a development build, not production acceptance.
+
+```sh
+./tools/build-app.sh --install
+open "$HOME/Applications/Rastera.app"
+```
+
 ## Corner Pin and installed development app
 
 ```sh

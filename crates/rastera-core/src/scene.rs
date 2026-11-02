@@ -92,6 +92,7 @@ pub struct Document {
     pub captures: BTreeMap<Id, crate::capture::Source>,
     pub media_assets: BTreeMap<Id, crate::media::Asset>,
     pub playbacks: BTreeMap<Id, crate::media::Playback>,
+    pub audio: rastera_audio::model::Model,
 }
 /// Portable document identity; destinations themselves are machine-local, never in this model.
 fn new_project_id() -> String {
@@ -102,7 +103,7 @@ fn new_project_id() -> String {
 impl Default for Document {
     fn default() -> Self {
         Self {
-            version: 10,
+            version: 11,
             project_id: new_project_id(),
             canvas: [WIDTH, HEIGHT],
             viewports: crate::mapping::defaults(),
@@ -116,10 +117,25 @@ impl Default for Document {
             captures: BTreeMap::new(),
             media_assets: BTreeMap::new(),
             playbacks: BTreeMap::new(),
+            audio: Default::default(),
         }
     }
 }
 impl Document {
+    /// Source identities, not visual instances, determine participation. Missing referenced
+    /// sources retain their settings but cannot start a producer until they resolve.
+    pub fn audio_participation(&self) -> BTreeSet<u64> {
+        use rastera_audio::model::Origin;
+        self.audio.sources.iter().filter_map(|(&id,s)|{
+            let referenced=match s.origin{
+                Origin::Playback(playback)=>self.playbacks.contains_key(&playback)&&(self.layers.iter().any(|l|l.content==Content::Media(playback))||matches!(self.background,crate::background::Background::Media{source,..}if source==playback)),
+                Origin::Capture(capture)=>self.captures.contains_key(&capture)&&self.layers.iter().any(|l|l.content==Content::Capture(capture)),
+                Origin::File{..}|Origin::Input{..}=>s.scenes.contains(&self.active_scene),
+            };
+            (s.enabled&&(s.always_on||referenced)).then_some(id)
+        }).collect()
+    }
+
     pub fn viewport(&self, id: u64) -> Option<&crate::mapping::Viewport> {
         self.viewports.iter().find(|v| v.id == id)
     }
@@ -364,6 +380,19 @@ impl Document {
                 _ => {}
             }
         }
+        // Audio has its own reference lifetime; an Always On or temporarily disabled
+        // source must not lose its decoder/device definition with the last picture layer.
+        for source in self.audio.sources.values() {
+            match source.origin {
+                rastera_audio::model::Origin::Playback(id) => {
+                    media.insert(id);
+                }
+                rastera_audio::model::Origin::Capture(id) => {
+                    captures.insert(id);
+                }
+                _ => {}
+            }
+        }
         self.images.retain(|id, _| images.contains(id));
         self.texts.retain(|id, _| texts.contains(id));
         self.captures.retain(|id, _| captures.contains(id));
@@ -397,8 +426,9 @@ impl Document {
             .map(|l| l.id)
     }
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != 10 {
-            return Err("Unsupported project version (expected v10)".into());
+        self.audio.validate()?;
+        if self.version != 11 {
+            return Err("Unsupported project version (expected v11)".into());
         }
         if self.project_id.len() != 32 || !self.project_id.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("Invalid project identity".into());
@@ -669,6 +699,7 @@ impl History {
     pub fn undo(&mut self, doc: &mut Document) -> bool {
         if let Some(mut prev) = self.undo.pop() {
             prev.next_scene_id = prev.next_scene_id.max(doc.next_scene_id);
+            prev.audio.next_id = prev.audio.next_id.max(doc.audio.next_id);
             prev.next_id = prev.next_id.max(doc.next_id);
             prev.next_viewport_id = prev.next_viewport_id.max(doc.next_viewport_id);
             self.redo.push(std::mem::replace(doc, prev));
@@ -680,6 +711,7 @@ impl History {
     pub fn redo(&mut self, doc: &mut Document) -> bool {
         if let Some(mut next) = self.redo.pop() {
             next.next_scene_id = next.next_scene_id.max(doc.next_scene_id);
+            next.audio.next_id = next.audio.next_id.max(doc.audio.next_id);
             next.next_id = next.next_id.max(doc.next_id);
             next.next_viewport_id = next.next_viewport_id.max(doc.next_viewport_id);
             self.undo.push(std::mem::replace(doc, next));
@@ -749,6 +781,11 @@ pub fn save_project(doc: &Document, path: &Path) -> Result<(), String> {
     for asset in stored.media_assets.values_mut() {
         asset.path = relative(&asset.path, &base);
     }
+    for source in stored.audio.sources.values_mut() {
+        if let rastera_audio::model::Origin::File { path, .. } = &mut source.origin {
+            *path = relative(path, &base);
+        }
+    }
     let bytes = serde_json::to_vec_pretty(&stored).map_err(|e| e.to_string())?;
     let temporary = path.with_extension(format!("json.tmp-{}", std::process::id()));
     let mut file = std::fs::OpenOptions::new()
@@ -778,7 +815,8 @@ pub fn decode_document(mut value: serde_json::Value) -> Result<Document, String>
             value["viewports"] = serde_json::to_value(crate::mapping::defaults()).unwrap();
         }
         Some(2) => {}
-        Some(3) | Some(4) | Some(5) | Some(6) | Some(7) | Some(8) | Some(9) | Some(10) => {}
+        Some(3) | Some(4) | Some(5) | Some(6) | Some(7) | Some(8) | Some(9) | Some(10)
+        | Some(11) => {}
         _ => return Err("Unsupported project schema version".into()),
     }
     if value["version"].as_u64().is_some_and(|v| v < 3) {
@@ -851,6 +889,10 @@ pub fn decode_document(mut value: serde_json::Value) -> Result<Document, String>
         }
         value["version"] = 10.into();
     }
+    if value["version"] == 10 {
+        value["audio"] = serde_json::to_value(rastera_audio::model::Model::default()).unwrap();
+        value["version"] = 11.into();
+    }
     let doc: Document = serde_json::from_value(value).map_err(|e| e.to_string())?;
     doc.validate()?;
     Ok(doc)
@@ -892,6 +934,14 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
             asset.path = base.join(&asset.path);
         }
         asset.path = std::fs::canonicalize(&asset.path).unwrap_or_else(|_| asset.path.clone());
+    }
+    for source in doc.audio.sources.values_mut() {
+        if let rastera_audio::model::Origin::File { path, .. } = &mut source.origin {
+            if !path.is_absolute() {
+                *path = base.join(&*path);
+            }
+            *path = std::fs::canonicalize(&*path).unwrap_or_else(|_| path.clone());
+        }
     }
     Ok(doc)
 }

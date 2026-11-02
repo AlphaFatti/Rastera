@@ -48,6 +48,9 @@ pub struct Snapshot {
     #[serde(default)]
     pub panel_rects: BTreeMap<String, [f32; 4]>,
     pub playheads: BTreeMap<Id, Playhead>,
+    /// Runtime audio-only transport is separate from the editable/saved logical mixer.
+    #[serde(default)]
+    pub audio_playheads: BTreeMap<Id, Playhead>,
     pub machine: String,
     pub enabled: BTreeMap<u64, Output>,
 }
@@ -88,7 +91,12 @@ impl Snapshot {
                 || r[3] < 200.
                 || r[2] > 32768.
                 || r[3] > 32768.
-        }) || self.playheads.len() > 4
+        }) || self.audio_playheads.len() > 16
+            || self
+                .audio_playheads
+                .values()
+                .any(|p| !p.seconds.is_finite() || !(0.0..=86400.).contains(&p.seconds))
+            || self.playheads.len() > 4
             || self
                 .playheads
                 .values()
@@ -215,6 +223,7 @@ mod tests {
             clean_windows: Default::default(),
             panel_rects: Default::default(),
             playheads: BTreeMap::new(),
+            audio_playheads: BTreeMap::new(),
             machine: "test".into(),
             enabled: BTreeMap::new(),
         };

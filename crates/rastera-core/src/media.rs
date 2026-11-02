@@ -38,11 +38,13 @@ pub struct State {
 pub struct Control {
     pub state: Mutex<State>,
     pub slot: Arc<crate::capture::Slot>,
+    pub audio_clock: Arc<rastera_audio::clock::Clock>,
 }
 impl Control {
     pub fn new(slot: Arc<crate::capture::Slot>, playing: bool, duration: f64) -> Self {
         Self {
             slot,
+            audio_clock: Arc::new(Default::default()),
             state: Mutex::new(State {
                 position: 0.,
                 playing,

@@ -154,6 +154,8 @@ pub(super) struct Editor {
     pub engine: SceneEngine,
     pub(super) capture: super::capture::Capture,
     media: super::media::Media,
+    audio: super::audio::Audio,
+    audio_before: Option<Document>,
     pub doc: Document,
     pub(super) destinations: super::destinations::Destinations,
     output_project_reload: bool,
@@ -211,6 +213,8 @@ impl Editor {
             engine,
             capture,
             media,
+            audio: super::audio::Audio::new(),
+            audio_before: None,
             destinations: super::destinations::Destinations::new(),
             output_project_reload: false,
             output_disable_requested: false,
@@ -313,6 +317,11 @@ impl Editor {
             ));
         }
     }
+    fn finish_audio_edit(&mut self) {
+        if let Some(before) = self.audio_before.take() {
+            self.history.record(before, &self.doc);
+        }
+    }
     fn poll(&mut self) {
         if self.engine.applied() >= self.revision {
             self.live_scene = self.doc.active_scene;
@@ -383,6 +392,7 @@ impl Editor {
                 self.saved = Some(self.doc.clone());
                 self.project = Some(path.clone());
                 self.output_project_reload = true;
+                self.audio.project_opened();
                 log(format!("editor_loaded path={}\n", path.display()));
             } else if let Some(history) = self.pending_history.take() {
                 self.history = history;
@@ -721,6 +731,12 @@ impl Editor {
         );
         self.capture.reconcile(&self.doc);
         self.media.reconcile(&self.doc);
+        self.audio.reconcile(
+            &self.doc,
+            &self.media,
+            &self.destinations.discovery.machine,
+            self.project.as_deref(),
+        );
         if let Some(restored) = self.restore.take() {
             let current = self
                 .destinations
@@ -765,6 +781,8 @@ impl Editor {
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(r[0], r[1])));
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(r[2], r[3])));
             }
+            self.audio
+                .restore_playheads(restored.audio_playheads.clone());
             for (id, p) in restored.playheads {
                 if let Some(c) = self.media.control(&self.doc, id) {
                     let mut state = c.state.lock().unwrap();
@@ -848,6 +866,7 @@ impl Editor {
                 })
                 .collect(),
                 playheads,
+                audio_playheads: self.audio.audio_playheads(),
                 machine: self.destinations.discovery.machine.clone(),
                 enabled,
             });
@@ -1092,6 +1111,8 @@ impl Editor {
         egui::TopBottomPanel::top("editor_toolbar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.strong("Live Edit — changes affect outputs");
+                ui.selectable_value(&mut self.audio.open, true, "Audio Mixer");
+                ui.selectable_value(&mut self.audio.open, false, "Canvas / Viewports");
                 if ui
                     .add_enabled(!loading, egui::Button::new("Insert Video / GIF…"))
                     .clicked()
@@ -1380,7 +1401,7 @@ if ui.button("Restart").clicked(){s.seek=Some(0.);s.playing=true;}let mut pos=s.
                             egui::ComboBox::from_label("Loop").selected_text(format!("{:?}",p.looping)).show_ui(ui,|ui|{ui.selectable_value(&mut p.looping,None,"File default");ui.selectable_value(&mut p.looping,Some(true),"Loop");ui.selectable_value(&mut p.looping,Some(false),"Once");});
                             ui.horizontal(|ui|{ui.label("End");ui.selectable_value(&mut p.end,rastera_core::media::End::Hold,"Hold Last Frame");ui.selectable_value(&mut p.end,rastera_core::media::End::Black,"Black");});
                             ui.checkbox(&mut p.restart_on_activation,"Restart when scene activates");
-                            ui.small("Duplicate shares playback; Import creates an independent playhead. Video audio is muted.");
+                            ui.small("Duplicate shares playback; Import creates an independent playhead. Video audio uses the Audio Mixer; add its embedded tracks there.");
                         }
                         if let Content::Capture(id)=source {
                             let source=&self.doc.captures[&id];let status=self.capture.status(&self.doc,id);
@@ -1456,6 +1477,45 @@ if ui.button("Restart").clicked(){s.seek=Some(0.);s.playing=true;}let mut pos=s.
         }
         let area = egui::CentralPanel::default()
             .show(ctx, |ui| {
+                if self.audio.open {
+                    let before = self.doc.clone();
+                    let import = egui::ScrollArea::vertical()
+                        .id_salt("audio-mixer")
+                        .show(ui, |ui| self.audio.ui(ui, &mut self.doc))
+                        .inner;
+                    if before != self.doc {
+                        match self.doc.validate() {
+                            Ok(()) => {
+                                if self.audio_before.is_none() {
+                                    self.audio_before = Some(before);
+                                }
+                            }
+                            Err(error) => {
+                                self.doc = before;
+                                self.error = Some(error);
+                            }
+                        }
+                    }
+                    if !ctx.wants_keyboard_input() && !ctx.input(|i| i.pointer.any_down()) {
+                        self.finish_audio_edit();
+                    }
+                    if import {
+                        if let Some(path) = dialog(5) {
+                            let name = path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned();
+                            self.audio.inspect(
+                                path.clone(),
+                                rastera_audio::model::Origin::File { path, duration: 0. },
+                                name,
+                                None,
+                            );
+                        }
+                    }
+                    return egui::Rect::from_min_size(ui.min_rect().min, egui::Vec2::ZERO);
+                }
                 ui.label(format!(
                     "{} × {} canvas pixels • {} • overlays are operator-only",
                     self.doc.canvas[0],
@@ -1469,6 +1529,9 @@ if ui.button("Restart").clicked(){s.seek=Some(0.);s.playing=true;}let mut pos=s.
                 ui.available_rect_before_wrap()
             })
             .inner;
+        if !self.audio.open {
+            self.finish_audio_edit();
+        }
         self.dialog_ui(ctx);
         // Evaluate AFTER text widgets process this frame's focus/keyboard input.
         if !ctx.wants_keyboard_input() && !loading {
@@ -1477,16 +1540,20 @@ if ui.button("Restart").clicked(){s.seek=Some(0.);s.playing=true;}let mut pos=s.
                 ..egui::Modifiers::COMMAND
             };
             if ctx.input_mut(|i| i.consume_key(redo, egui::Key::Z)) {
+                self.finish_audio_edit();
                 self.action(Action::Redo);
             } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z)) {
+                self.finish_audio_edit();
                 self.action(Action::Undo);
             }
             if self.mode == Mode::Canvas
+                && !self.audio.open
                 && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::D))
             {
                 self.action(Action::Duplicate);
             }
             if self.mode == Mode::Canvas
+                && !self.audio.open
                 && ctx.input(|i| {
                     i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)
                 })
@@ -1535,6 +1602,7 @@ impl Editor {
 }
 impl Drop for Editor {
     fn drop(&mut self) {
+        super::audio_native::emergency(true);
         let mut snapshot =
             self.session
                 .remembered
@@ -1551,6 +1619,7 @@ impl Drop for Editor {
                     clean_windows: self.clean_windows.clone(),
                     panel_rects: Default::default(),
                     playheads: Default::default(),
+                    audio_playheads: Default::default(),
                     machine: self.destinations.discovery.machine.clone(),
                     enabled: Default::default(),
                 });
@@ -1564,6 +1633,7 @@ impl Drop for Editor {
         snapshot.selected = self.selected;
         snapshot.viewport = self.viewport_selected;
         snapshot.viewports_mode = self.mode == Mode::Viewports;
+        snapshot.audio_playheads = self.audio.audio_playheads();
         snapshot.playheads = self
             .doc
             .playbacks

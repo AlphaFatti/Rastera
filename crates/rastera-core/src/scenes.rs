@@ -65,6 +65,7 @@ impl Document {
         if self.scenes.len() >= 16 {
             return Err("Scene limit reached (16)".into());
         }
+        let original_scene = self.active_scene;
         let mut scene = if duplicate {
             self.deref_scene().clone()
         } else {
@@ -90,6 +91,13 @@ impl Document {
         }
         let id = scene.id;
         self.scenes.push(scene);
+        if duplicate {
+            for source in self.audio.sources.values_mut() {
+                if source.scenes.contains(&original_scene) && !source.scenes.contains(&id) {
+                    source.scenes.push(id);
+                }
+            }
+        }
         self.active_scene = id;
         Ok(id)
     }
@@ -102,6 +110,9 @@ impl Document {
         }
         let n = self.scenes.len();
         self.scenes.retain(|s| s.id != id);
+        for source in self.audio.sources.values_mut() {
+            source.scenes.retain(|scene| *scene != id);
+        }
         if !self.scenes.iter().any(|s| s.id == self.active_scene) {
             self.active_scene = self.scenes[0].id;
         }

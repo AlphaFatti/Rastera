@@ -25,12 +25,18 @@ extern "C" void *rastera_video_create(const char *path){@autoreleasepool{
  [item addOutput:v.output];v.player=[AVPlayer playerWithPlayerItem:item];v.player.muted=YES;v.player.volume=0.;v.player.actionAtItemEnd=AVPlayerActionAtItemEndPause;
  return (__bridge_retained void*)v;
 }}
-extern "C" int rastera_video_step(void *handle,void *context,bool playing,double seek,double *position){@autoreleasepool{
+extern "C" int rastera_video_step(void *handle,void *context,bool playing,double seek,double *position,double *positionHost,double *actualRate){@autoreleasepool{
  RasteraFileVideo *v=(__bridge RasteraFileVideo*)handle;
  if(v.player.currentItem.status==AVPlayerItemStatusFailed)return -1;
  if(seek>=0.)[v.player seekToTime:CMTimeMakeWithSeconds(seek,60000) toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];
  if(playing){if(v.player.rate==0.)[v.player play];}else [v.player pause];
- CMTime t=[v.output itemTimeForHostTime:CACurrentMediaTime()];*position=CMTimeGetSeconds(v.player.currentTime);
+ // Sample the item/host relationship before pixel copying. Copy arrival is not media time.
+ *positionHost=CACurrentMediaTime();*position=CMTimeGetSeconds(v.player.currentTime);*actualRate=0.;
+ CMTime itemAnchor=kCMTimeInvalid,hostAnchor=kCMTimeInvalid;Float64 rate=0.;
+ if(v.player.currentItem.timebase&&CMSyncGetRelativeRateAndAnchorTime(v.player.currentItem.timebase,CMClockGetHostTimeClock(),&rate,&itemAnchor,&hostAnchor)==noErr&&CMTIME_IS_NUMERIC(itemAnchor)&&CMTIME_IS_NUMERIC(hostAnchor)&&std::isfinite(rate)){
+   *position=CMTimeGetSeconds(itemAnchor)+(*positionHost-CMTimeGetSeconds(hostAnchor))*rate;*actualRate=rate;
+ }
+ CMTime t=[v.output itemTimeForHostTime:*positionHost];
  if([v.output hasNewPixelBufferForItemTime:t]){CVPixelBufferRef b=[v.output copyPixelBufferForItemTime:t itemTimeForDisplay:nil];if(b){CVPixelBufferLockBaseAddress(b,kCVPixelBufferLock_ReadOnly);rastera_media_pixels(context,(uint32_t)CVPixelBufferGetWidth(b),(uint32_t)CVPixelBufferGetHeight(b),CVPixelBufferGetBytesPerRow(b),(const uint8_t*)CVPixelBufferGetBaseAddress(b),CVPixelBufferGetDataSize(b));CVPixelBufferUnlockBaseAddress(b,kCVPixelBufferLock_ReadOnly);CVPixelBufferRelease(b);}}
  return v.player.currentItem.status==AVPlayerItemStatusReadyToPlay?1:0;
 }}

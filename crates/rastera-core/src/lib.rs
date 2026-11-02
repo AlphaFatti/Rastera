@@ -122,3 +122,6 @@ pub mod scenes;
 pub mod recovery;
 
 pub mod pin;
+
+#[cfg(test)]
+mod audio_tests;

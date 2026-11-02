@@ -19,7 +19,7 @@ def run(*args, **kwargs):
 
 def verify(bundle):
     info = plistlib.loads((bundle/'Contents/Info.plist').read_bytes())
-    assert info['CFBundleIdentifier'] == BUNDLE_ID and info['NSCameraUsageDescription']
+    assert info['CFBundleIdentifier'] == BUNDLE_ID and info['NSCameraUsageDescription'] and info['NSMicrophoneUsageDescription']
     assert info['CFBundleExecutable'] == 'Rastera'
     binary = bundle/'Contents/MacOS/Rastera'
     arches = subprocess.check_output(['lipo', '-archs', str(binary)], text=True).strip()
@@ -36,8 +36,8 @@ def verify(bundle):
     run('codesign', '--verify', '--deep', '--strict', bundle)
     entitlements = plistlib.loads(subprocess.check_output(['codesign', '-d', '--entitlements', ':-', str(bundle)], stderr=subprocess.DEVNULL))
     assert entitlements.get('com.apple.security.device.camera') is True
-    assert not entitlements.get('com.apple.security.device.audio-input', False)
-    print(f'Verified arm64, system dependencies, metadata, camera entitlement and signature: {bundle}')
+    assert entitlements.get('com.apple.security.device.audio-input') is True
+    print(f'Verified arm64, system dependencies, metadata, camera/audio-input entitlements and signature: {bundle}')
 
 
 def replace(staged, destination):
@@ -85,7 +85,8 @@ def main():
                 CFBundleExecutable='Rastera', CFBundlePackageType='APPL', CFBundleShortVersionString=version.split('-')[0],
                 CFBundleVersion=version.split('-')[0], RasteraDevelopmentVersion=version, LSMinimumSystemVersion='14.0',
                 NSHighResolutionCapable=True, NSCameraUseContinuityCameraDeviceType=True,
-                NSCameraUsageDescription='Rastera uses the camera or capture device you select as a live canvas source. No audio is captured.')
+                NSCameraUsageDescription='Rastera uses the camera or capture device you explicitly select as a live canvas source.',
+                NSMicrophoneUsageDescription='Rastera captures audio only from the input device and channels you explicitly enable in its mixer. No microphone is automatically associated with a camera.')
     (staged/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
     identity = os.environ.get('RASTERA_SIGN_IDENTITY', '-')
     command = ['codesign', '--force', '--sign', identity, '--options', 'runtime', '--entitlements', ROOT/'tools/macos/camera.entitlements.plist']

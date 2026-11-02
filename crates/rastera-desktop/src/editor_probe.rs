@@ -1,5 +1,7 @@
 //! Explicit, noninteractive native replay for busy test desktops. No system input.
 use super::*;
+#[path = "editor_audio_probe.rs"]
+mod audio;
 #[path = "editor_capture_probe.rs"]
 mod capture;
 #[path = "editor_display_probe.rs"]
@@ -33,10 +35,14 @@ pub(super) struct Probe {
     capture: Option<capture::CaptureProbe>,
     media: Option<media::MediaProbe>,
     pin: Option<pin::PinProbe>,
+    audio: Option<audio::AudioProbe>,
 }
 impl Probe {
     pub fn new(folder: PathBuf) -> Self {
         Self {
+            audio: std::env::args()
+                .any(|a| a == "--audio-probe")
+                .then(|| audio::AudioProbe::new(folder.clone())),
             pin: std::env::args()
                 .any(|a| a == "--corner-pin-probe")
                 .then(|| pin::PinProbe::new(folder.clone())),
@@ -79,6 +85,16 @@ impl Probe {
     ) -> bool {
         if e.busy_file || e.pending_load.is_some() || e.engine.applied() != e.revision {
             return false;
+        }
+        if let Some(audio) = &mut self.audio {
+            return match audio.tick(e, preview, outputs, enabled) {
+                Ok(done) => done,
+                Err(error) => {
+                    log(format!("audio_probe failed=1 error={error}\n"));
+                    e.error = Some(error);
+                    true
+                }
+            };
         }
         if let Some(pin) = &mut self.pin {
             return match pin.tick(e, preview, outputs, enabled) {

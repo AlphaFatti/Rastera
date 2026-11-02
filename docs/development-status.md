@@ -1,5 +1,11 @@
 # Rastera development status
 
+## Audio engine — current review work
+
+`feature/audio-engine` starts at f51e1b8. Output recall fixes are committed separately; the real installed profile now restores enabled windowed/fullscreen outputs. The audio implementation adds a reusable 48 kHz core, discrete multi-track channel interpretation, independent strip DSP and ten stereo buses, native per-device routing and explicit input authorization, schema-11 migration and separate audio playhead recovery. Shared GPU ownership is unchanged. Audio activation always starts off. [Implementation and verification record](audio-engine.md).
+
+At the implementation checkpoint, formatting/check/Clippy/release/signing, 109 Rust test executions and 14 Python tests pass. Short installed native workflows pass; the ten-minute mixed-source trial is running. Human listening, physical A/V/loopback and unavailable multichannel hardware remain pending. Source seek/loop PCM gaps and existing video/operator pause limitations are preserved in the report. Milestone acceptance remains pending.
+
 ## Source corner pin and installed launch — current review work
 
 `feature/source-corner-pin` builds on d81ecad. Per-instance perspective homographies cover image/capture/video/GIF/editable text, with stable full-source crop semantics, polygon hit testing, labelled/numeric corner controls, gestures/history and schema-10 project/recovery migration. Prepared resources and the existing shared producer/pool/leases remain. The single build workflow now produces verified staged bundles and installs a real app with its existing signing identity, notices and camera entitlement. [Full conventions, exact commands and verification](source-corner-pin.md). Workspace version and v0.0.1 remain unchanged; UI overhaul is deferred.

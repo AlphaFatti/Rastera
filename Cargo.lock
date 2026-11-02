@@ -1808,6 +1808,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca45419789ae5a7899559e9512e58ca889e41f04f1f2445e9f4b290ceccd1d08"
 
 [[package]]
+name = "rastera-audio"
+version = "0.0.2-dev"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "rastera-core"
 version = "0.0.2-dev"
 dependencies = [
@@ -1815,6 +1822,7 @@ dependencies = [
  "getrandom",
  "gif",
  "image",
+ "rastera-audio",
  "serde",
  "serde_json",
  "ttf-parser",
@@ -1828,6 +1836,7 @@ dependencies = [
  "eframe",
  "foreign-types",
  "pollster",
+ "rastera-audio",
  "rastera-core",
  "raw-window-handle",
  "serde",
