@@ -1,5 +1,11 @@
 # Rastera development status
 
+## v0.0.2 development-preview packaging
+
+`release/v0.0.2` freezes implementation `7d2fb6106ead8310a37c428c29702edf186afb1f`. Version/lockfile, release documentation and the existing app packager change; no audio, renderer, interaction or dependency upgrade is included. The arm64 DMG is ad-hoc signed/unnotarized because no valid Developer ID/notary configuration is available. [Release scope, package verification and commands](releases/v0.0.2.md). Source seek/loop PCM gaps, transition/capture pauses and pending physical calibration/hardware/endurance remain; the user's VOG replacement observation is scoped in the audio report. Existing installation/profile and opt-in video recall are preserved. Milestone and production acceptance remain pending.
+
+Current roadmap: **audio stabilization → slides engine → UI overhaul → cue/queue engine**. No further implementation begins in this checkpoint.
+
 ## Audio engine — current review work
 
 `feature/audio-engine` starts at f51e1b8. Output recall fixes are committed separately; the real installed profile now restores enabled windowed/fullscreen outputs. The audio implementation adds a reusable 48 kHz core, discrete multi-track channel interpretation, independent strip DSP and ten stereo buses, native per-device routing and explicit input authorization, schema-11 migration and separate audio playhead recovery. Shared GPU ownership is unchanged. Audio activation always starts off. [Implementation and verification record](audio-engine.md).

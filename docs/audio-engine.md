@@ -1,6 +1,6 @@
 # Audio engine development
 
-Branch feature/audio-engine, from f51e1b8. Existing tags and main remain unchanged. Planned order is audio, slides, playback queues, then UI overhaul; this branch does not implement slides/queues.
+Branch feature/audio-engine, from f51e1b8. Existing tags and main remain unchanged. The v0.0.2 implementation freezes commit `7d2fb6106ead8310a37c428c29702edf186afb1f`. Current roadmap: audio stabilization, slides engine, UI overhaul, then cue/queue engine. The user is designing the later UI; this branch implements none of those future engines.
 
 ## Stage 1 — startup viewport recall (November 2, 2026)
 

@@ -160,6 +160,8 @@ Consider Syphon on Mac and Spout on Windows as subsequent local-application adap
 
 ## 8. Milestones and exit criteria
 
+**Current implementation roadmap (v0.0.2): audio stabilization → slides engine → UI overhaul → cue/queue engine.** The user is designing the later UI and will provide that scope separately. The blueprint table below groups long-term capabilities; its combined presentation milestone does not override this current sequencing or imply feature completion. The v0.0.2 checkpoint freezes the current implementation; seek/loop PCM gaps, transition pauses and hardware/production acceptance remain pending.
+
 | Milestone | Deliverable | Exit criteria |
 | --- | --- | --- |
 | 0 — Technical proofs | Renderer/output prototype, libobs comparison, NDI/DeckLink feasibility notes | Real Mac test produces two clean outputs; measurements identify copies, frame pacing, SDK constraints, and the chosen engine |

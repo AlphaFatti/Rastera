@@ -1809,14 +1809,14 @@ checksum = "ca45419789ae5a7899559e9512e58ca889e41f04f1f2445e9f4b290ceccd1d08"
 
 [[package]]
 name = "rastera-audio"
-version = "0.0.2-dev"
+version = "0.0.2"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "rastera-core"
-version = "0.0.2-dev"
+version = "0.0.2"
 dependencies = [
  "epaint",
  "getrandom",
@@ -1831,7 +1831,7 @@ dependencies = [
 
 [[package]]
 name = "rastera-desktop"
-version = "0.0.2-dev"
+version = "0.0.2"
 dependencies = [
  "eframe",
  "foreign-types",
@@ -1847,7 +1847,7 @@ dependencies = [
 
 [[package]]
 name = "rastera-native-output"
-version = "0.0.2-dev"
+version = "0.0.2"
 dependencies = [
  "eframe",
  "wgpu",

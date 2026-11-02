@@ -1,5 +1,5 @@
 #!/bin/sh
-# One release build/packager, optionally followed by a verified installed copy.
+# One release build/packager; --install replaces a verified copy, --dmg creates a tester image.
 set -eu
 rastera_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$rastera_root"

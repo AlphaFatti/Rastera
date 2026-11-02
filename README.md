@@ -4,6 +4,23 @@ Rastera is a free, open-source live video and presentation application in early 
 
 The long-term [architecture blueprint](docs/architecture.md) describes planned work, not implemented capabilities. See [development status](docs/development-status.md) for the current scope and verification record. An application source license still needs to be selected before a public release.
 
+## v0.0.2 — early development preview
+
+The implementation is frozen at `7d2fb6106ead8310a37c428c29702edf186afb1f`; this release adds versioning, documentation and packaging only. [Release scope and verification](docs/releases/v0.0.2.md) preserve source seek/loop PCM gaps, transition/capture pauses and pending hardware/endurance acceptance. The delivered **arm64 / macOS 14+** DMG is **ad-hoc signed and unnotarized**; only Apple M1 Pro / macOS 15.5 has been tested. See the included tester guide for per-app Gatekeeper opening and recovery controls.
+
+To reproduce the package from a clean release checkout:
+
+```sh
+./tools/build-app.sh --dmg
+# Artifacts: target/dist/Rastera-0.0.2-macOS-arm64.dmg,
+# Rastera-0.0.2-Tester-Guide.txt, *-Build-Info.json and SHA256SUMS
+(cd target/dist && shasum -a 256 -c SHA256SUMS)
+```
+
+Packaging leaves the installed app/profile intact. A tester drags the app from the DMG into Applications and launches it normally; no development tools are needed at runtime. [Packaging/signing options](docs/releases/v0.0.2.md) separate distribution credentials from local signing. No public GitHub Release is created.
+
+Roadmap: **audio stabilization → slides engine → UI overhaul → cue/queue engine**. The user is designing the later UI; this checkpoint starts none of that work.
+
 ## Audio engine — current development review
 
 The operator now has an **Audio Mixer** with discrete file/capture inputs, configurable Stereo/Dual Mono/Dual Stereo/Quad Mono interpretation, per-strip DSP and ten stereo output buses patched to explicit Core Audio devices/channel pairs. Audio output activation always starts off. Use **Mute All Audio / Shift–Command–M** separately from video-output recovery. Video and its interpreted strips share one transport; there is no parallel AVPlayer monitoring.
@@ -30,7 +47,7 @@ In **Canvas**, choose **Transform**, **Crop** or **Corner Pin**. Pin image, came
 
 [Controls, transform conventions, installation and measured verification](docs/source-corner-pin.md) distinguish unit/native/launcher checks from pending human picture/hardware acceptance. Existing pause/capture limitations remain; the broader UI overhaul stays deferred.
 
-## Media and quick scenes (0.0.2-dev review build)
+## Media and quick scenes
 
 ```sh
 ./tools/build-app.sh
@@ -40,15 +57,15 @@ open target/Rastera.app --args --no-restore --outputs=0
 open target/Rastera.app --args --project=/absolute/path/show.rastera.json --outputs=0
 ```
 
-Import images, **Insert Video / GIF…**, or add an authorized camera. Picture layers have normalized, non-destructive source crop controls and an explicit crop-handle mode. File playback offers play/pause, restart, seek, loop overrides and Hold Last Frame/Black; video audio is muted. Backgrounds support solid/image/video with Fit, Fill and Stretch. Quick Scenes owns persistent ordered layer instances/backgrounds and cuts prepared compositions at frame boundaries while preserving viewport/output identities. Duplicate picture/media layers deliberately share sources; re-import a clip for an independent playhead.
+Import images, **Insert Video / GIF…**, or add an authorized camera. Picture layers have normalized, non-destructive source crop controls and an explicit crop-handle mode. File playback offers play/pause, restart, seek, loop overrides and Hold Last Frame/Black; embedded video audio is explicitly added/routed through Audio Mixer (no parallel player monitoring). Backgrounds support solid/image/video with Fit, Fill and Stretch. Quick Scenes owns persistent ordered layer instances/backgrounds and cuts prepared compositions at frame boundaries while preserving viewport/output identities. Duplicate picture/media layers deliberately share sources; re-import a clip for an independent playhead.
 
 **Restore Last Session** retains unsaved edits, original project identity/path, active scene, selection/mode, window/panel layout and media positions/states in a separate bounded recovery journal. **Restore enabled outputs on startup** defaults off and checks exact saved machine/destination preferences. Explicit --project overrides restoration; --no-restore bypasses it. --session-dir=/absolute/scratch/path isolates recovery and destination preferences for tests. Camera authorization is never requested by restoration.
 
-Projects now save as **schema 10**, explicitly migrating versions 1–9 (including schema-5 capture projects). Missing files/devices retain document references and useful status. Limits: 16 scenes, 128 layers per scene, two capture definitions and four file-playback instances up to 1920×1080 pixels each (either orientation). The independent producer, four-texture pool, bounded generations and native completion-held leases remain. #17151A belongs to the operator workspace, independently of canvas backgrounds.
+Projects now save as **schema 11**, explicitly migrating versions 1–10 (including schema-5 capture projects). Missing files/devices retain document references and useful status. Limits: 16 scenes, 128 layers per scene, two capture definitions and four file-playback instances up to 1920×1080 pixels each (either orientation). The independent producer, four-texture pool, bounded generations and native completion-held leases remain. #17151A belongs to the operator workspace, independently of canvas backgrounds.
 
-See [media/scenes implementation, commands, measurements and limitations](docs/media-scenes.md). Native API/replay checks and human picture verification are reported separately; existing pause/capture limits and production acceptance remain pending. The sections below preserve earlier checkpoint details; schema 9 and this recovery policy supersede their schema-5/no-recovery descriptions.
+See [media/scenes implementation, commands, measurements and limitations](docs/media-scenes.md). Native API/replay checks and human picture verification are reported separately; existing pause/capture limits and production acceptance remain pending. The sections below preserve earlier checkpoint details; schema 11 and this recovery policy supersede their schema-5/no-recovery descriptions.
 
-## Capture-enabled development app (0.0.2-dev)
+## Capture-enabled development app
 
 ```sh
 ./tools/build-app.sh
@@ -57,7 +74,7 @@ open target/Rastera.app
 
 Use **Add Capture Device…**, allow Rastera camera access, choose an AVFoundation device and resolution/frame rate, then add it to the canvas. The signed development bundle has the camera usage description/entitlement and stable identity needed for consistent native permission testing. Capture layers share sessions when duplicated and support normal editing/history. The inspector reports actual BGRA format/cadence and device status; missing/unauthorized sources remain saved and draw black.
 
-Two source definitions are supported, up to 1920×1080 pixels (either orientation) at 1–60 fps. This is a bounded upload-copy path, not zero-copy capture; the display path still has no CPU canvas readback. The capture checkpoint used schema 5; current projects save as schema 10 with explicit v1–v9 migration. Existing assigned-display destinations and Disable All Outputs remain; that recovery action does not stop referenced camera sources. Audio and the native DeckLink SDK remain future work.
+Two source definitions are supported, up to 1920×1080 pixels (either orientation) at 1–60 fps. This is a bounded upload-copy path, not zero-copy capture; the display path still has no CPU canvas readback. The capture checkpoint used schema 5; current projects save as schema 11 with explicit v1–v10 migration. Existing assigned-display destinations and Disable All Outputs remain; that recovery action does not stop referenced camera sources. Explicit capture audio is available through Audio Mixer; the native DeckLink SDK remains future work.
 
 [Capture architecture, exact commands, measured devices and remaining checks](docs/capture-devices.md) separate automated/native evidence from the user's successful FaceTime-plus-OBS/DVD picture observation. [v0.0.1](https://github.com/AlphaFatti/Rastera/tree/v0.0.1) is the prior fullscreen development-preview checkpoint; main remains unmerged.
 
@@ -79,7 +96,7 @@ Try all seven output presets (first four windows open initially):
 cargo run --release --locked -p rastera-desktop --bin canvas-editor -- --project=examples/dynamic-viewports.rastera.json --outputs=4
 ```
 
-Add/Remove Selected and each viewport’s Open clean output control are in Viewports mode. Closing a window preserves its logical definition. Undoing deletion restores the definition with its original ID, without reopening the window. Projects save as schema 10 with portable project identity and reusable source/scene definitions; versions 1–9 migrate explicitly, preserving their sampling. Saved empty viewport lists stay empty. Assigned-display fullscreen is available as a review prototype; see below.
+Add/Remove Selected and each viewport’s Open clean output control are in Viewports mode. Closing a window preserves its logical definition. Undoing deletion restores the definition with its original ID, without reopening the window. Projects save as schema 11 with portable project identity and reusable source/scene definitions; versions 1–10 migrate explicitly, preserving their sampling. Saved empty viewport lists stay empty. Assigned-display fullscreen is available as a review prototype; see below.
 
 ## Assigned-display fullscreen (review prototype)
 
