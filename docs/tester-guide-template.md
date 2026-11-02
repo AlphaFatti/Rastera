@@ -66,6 +66,8 @@ not establish a fixture defect or general audio continuity. Physical A/V timing,
 loopback calibration, broad multichannel capture/hardware, disconnect/reconnect,
 and endurance beyond the recorded ten-minute trial remain pending. This release
 does not resolve those issues. UI redesign, slides and cue/queue are future work.
+The build Mac already had Gatekeeper assessments disabled; this was not changed.
+Its quarantined-copy launch does not verify opening on an enforcing Mac.
 
 YOUR DATA AND UNINSTALL
 

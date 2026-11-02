@@ -193,7 +193,7 @@ def assessment(path, kind):
     if kind == 'open':
         command += ['--context', 'context:primary-signature']
     result = subprocess.run(command+[str(path)], capture_output=True, text=True)
-    return {'exit_code': result.returncode, 'output': (result.stdout+result.stderr).strip()}
+    return {'exit_code': result.returncode, 'output': (result.stdout+result.stderr).strip().replace(str(path), path.name)}
 
 
 def checksums(paths):
@@ -241,10 +241,14 @@ def make_dmg(bundle, output_dir, metadata, identity, profile):
         notarize(dmg, profile, output_dir, 'disk-image')
     run('codesign', '--verify', '--strict', dmg)
     run('hdiutil', 'verify', dmg)
+    host = subprocess.run(['spctl', '--status'], capture_output=True, text=True)
+    host_status = (host.stdout+host.stderr).strip()
     app_assessment, dmg_assessment = assessment(bundle, 'execute'), assessment(dmg, 'open')
-    if profile and (app_assessment['exit_code'] or dmg_assessment['exit_code']):
+    if profile and (host_status != 'assessments enabled' or app_assessment['exit_code'] or dmg_assessment['exit_code']):
         raise RuntimeError('Notarized distribution failed final Gatekeeper assessment')
-    report = dict(metadata, bundle_gatekeeper=app_assessment, dmg_gatekeeper=dmg_assessment,
+    report = dict(metadata, gatekeeper_host_status=host_status,
+                  gatekeeper_enforced_acceptance_verified=host_status == 'assessments enabled' and bool(profile),
+                  bundle_gatekeeper=app_assessment, dmg_gatekeeper=dmg_assessment,
                   disk_image_format='UDZO compressed read-only', demo_included=False)
     info = output_dir/f'{stem}-Build-Info.json'
     info.write_text(json.dumps(report, indent=2)+'\n')
