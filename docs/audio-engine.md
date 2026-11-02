@@ -122,3 +122,9 @@ open -g -na "$HOME/Applications/Rastera.app" --args \
 ```
 
 Human physical listening/picture acceptance is pending. Physical multichannel capture, actual device unplug/replug, denied/restricted OS settings, optical/acoustic loopback latency/A/V offset and drift, broader format/hardware coverage and endurance beyond600seconds remain pending. Source seek/loop gaps are reproduced, and the existing video/operator/capture-conditioned pause limitations remain. Consequently this is a reviewable implementation checkpoint, not unconditional milestone/production acceptance. Next measured fixes are source loop pre-roll across transport generations and longer allocation/decoder-memory tracing, followed by physical A/V calibration; the slide/queue/UI engines are not implemented here.
+
+### Human follow-up: replacement VOG file
+
+The user initially reported repeating clicks/dropouts, then replaced the synthetic test WAV with their own VOG file and reported that the click disappeared. This is scoped evidence of clean playback for that VOG file; it does not establish every route, physical sync or short-loop continuity. The replacement and current review session were left intact; no private voice audio was copied or recorded.
+
+An offline check of the actual synthetic review WAV found two channels, 48 kHz/16-bit PCM, exactly288000frames (six seconds), peak approximately0.1. Maximum adjacent sample steps were0.00289917/0.00433350; wrap-seam steps were0.00286865/0.00433350, within the normal sine-wave steps. No abnormal sample discontinuity was found in the file. Since this fixture loops every six seconds, the existing measured transport-loop gaps remain a plausible explanation; an embedded file click has not been established. No engine change or milestone acceptance is inferred from the replacement-file observation. The earlier physical-listening failure report is retained rather than reclassified as a confirmed fixture defect.
