@@ -81,7 +81,7 @@ impl Probe {
             return false;
         }
         if let Some(pin) = &mut self.pin {
-            return match pin.tick(e, preview, enabled) {
+            return match pin.tick(e, preview, outputs, enabled) {
                 Ok(done) => done,
                 Err(error) => {
                     log(format!("corner_pin_probe failed=1 error={error}\n"));

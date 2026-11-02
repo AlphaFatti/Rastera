@@ -1,5 +1,11 @@
 # Rastera development status
 
+## Source corner pin and installed launch — current review work
+
+`feature/source-corner-pin` builds on d81ecad. Per-instance perspective homographies cover image/capture/video/GIF/editable text, with stable full-source crop semantics, polygon hit testing, labelled/numeric corner controls, gestures/history and schema-10 project/recovery migration. Prepared resources and the existing shared producer/pool/leases remain. The single build workflow now produces verified staged bundles and installs a real app with its existing signing identity, notices and camera entitlement. [Full conventions, exact commands and verification](source-corner-pin.md). Workspace version and v0.0.1 remain unchanged; UI overhaul is deferred.
+
+Pure tests, native replay, captured grid sampling, normal-profile recovery, Finder/Launchpad no-argument launches and Command-Q are reported separately in that guide. Human corner-pin acceptance, physical scanout, endurance and broader hardware remain pending; the existing operator/capture-conditioned pauses are not fixed by this change.
+
 ## Media, cropping, scenes and recovery — current review work
 
 `feature/media-scenes` starts at c813e6a; v0.0.1 is unchanged and workspace/app development version remains 0.0.2-dev. Sequential commits add per-instance picture crops; AVFoundation file video and streaming image-rs GIF playback; solid/image/video backgrounds; persistent quick scenes with latest-request frame-boundary cuts; and bounded atomic session recovery. Project schema 9 explicitly migrates v1–v8, retaining project/source/layer/viewport identity. The native shared-canvas producer/lease path, signed camera identity, existing controls and Disable All Outputs remain. [Full implementation and verification record](media-scenes.md).

@@ -294,6 +294,7 @@ impl Editor {
         }
     }
     fn cancel_gesture(&mut self) {
+        self.cancel_view_gesture();
         if let Some(g) = self.gesture.take() {
             self.doc = g.before;
             self.pin_error = None;

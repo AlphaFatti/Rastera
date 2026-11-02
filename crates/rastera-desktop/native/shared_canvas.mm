@@ -134,6 +134,7 @@ API_AVAILABLE(macos(14.0))
     id<MTLRenderPipelineState> _pipeline;
     void *_source;
     BOOL _embedded;
+    id _escapeMonitor;
     uint64_t _viewportID;
     uint32_t _sizedLogical[2];
     uint32_t _lastWidth,_lastHeight,_lastLogical[2]; float _lastMaps[8];
@@ -328,6 +329,7 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
         _view=[[SharedCanvasView alloc] initWithFrame:NSMakeRect(0,0,_window.contentView.bounds.size.width,_window.contentView.bounds.size.height)];
         _window.contentView=_view;
     }
+    if(_embedded){__weak SharedCanvasView *preview=_view;_escapeMonitor=[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *event){SharedCanvasView *view=preview;if(view&&view->editorEnabled&&event.window==view.window&&event.keyCode==53)[view recordPointer:event kind:4];return event;}];}
     _view.wantsLayer=YES; _layer=(CAMetalLayer *)_view.layer;
     _layer.device=_device; _layer.pixelFormat=MTLPixelFormatBGRA8Unorm;
     _layer.framebufferOnly=YES; _layer.maximumDrawableCount=3;
@@ -476,6 +478,7 @@ fragment float4 fragment_main(float4 p [[position]],constant Mapping &m [[buffer
 - (void)stop {
     NSCAssert(NSThread.isMainThread,@"Main lifecycle");
     if(_closed) return; _closed=YES;
+    if(_escapeMonitor){[NSEvent removeMonitor:_escapeMonitor];_escapeMonitor=nil;}
     _stats->stop=true;
     if(_worker.joinable()) _worker.join();
     const long result=dispatch_group_wait(_work,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC));
@@ -596,3 +599,10 @@ extern "C" uint64_t rastera_shared_errors(void *handle){if(@available(macOS 14.0
 
 extern "C" bool rastera_recovery_window_frame(void *handle,double *out){if(@available(macOS 14.0,*)){return [(__bridge SharedCanvasConsumer*)handle recoveryFrame:out];}return false;}
 extern "C" void rastera_recovery_restore_window(void *handle,const double *frame){if(@available(macOS 14.0,*)){[(__bridge SharedCanvasConsumer*)handle restoreFrame:frame];}}
+// Diagnostic-only key routing through the operator NSWindow, matching a real Escape key.
+extern "C" void rastera_editor_escape_probe(void *handle){
+ NSCAssert(NSThread.isMainThread,@"Escape replay on main");
+ if(@available(macOS 14.0,*)){SharedCanvasConsumer *c=(__bridge SharedCanvasConsumer*)handle;[c focusForProbe];
+ // The embedded consumer's focus method makes the operator key; send through AppKit's dispatcher.
+ NSWindow *window=NSApp.keyWindow;for(int i=0;i<2;++i){NSEvent *event=[NSEvent keyEventWithType:i?NSEventTypeKeyUp:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:CACurrentMediaTime() windowNumber:window.windowNumber context:nil characters:@"\033" charactersIgnoringModifiers:@"\033" isARepeat:NO keyCode:53];[NSApp postEvent:event atStart:NO];}}
+}

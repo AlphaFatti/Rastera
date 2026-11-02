@@ -9,3 +9,7 @@ rust-version = "1.99"
 
 [workspace.dependencies]
 wgpu = "24.0.5"
+
+[profile.release]
+# Keep optimized builds runnable without invoking the optional rust-objcopy helper.
+strip = false

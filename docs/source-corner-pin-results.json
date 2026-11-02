@@ -1,0 +1,112 @@
+{
+  "executable": "~/Applications/Rastera.app/Contents/MacOS/Rastera",
+  "cwd": "/",
+  "minimal_environment": true,
+  "captured": true,
+  "human_picture": "pending",
+  "native_pass": true,
+  "outputs": {
+    "1": {
+      "drawable": [
+        1920,
+        1080
+      ],
+      "frame": [
+        20,
+        59,
+        960,
+        568
+      ],
+      "fullscreen": false,
+      "key": false,
+      "mouse_ignored": false
+    },
+    "2": {
+      "drawable": [
+        1920,
+        1080
+      ],
+      "frame": [
+        1800,
+        89,
+        1920,
+        1080
+      ],
+      "fullscreen": true,
+      "key": false,
+      "mouse_ignored": true
+    }
+  },
+  "samples": [
+    {
+      "viewport": 1,
+      "count": 11,
+      "max_channel_delta": 1,
+      "capture_start": 587878.507007666,
+      "capture_return": 587878.6928665
+    },
+    {
+      "viewport": 2,
+      "count": 9,
+      "max_channel_delta": 0,
+      "capture_start": 587878.938677875,
+      "capture_return": 587879.112868291
+    }
+  ],
+  "exit_code": 0,
+  "drained": true,
+  "uncaptured_final": {
+    "cwd": "/",
+    "minimal_environment": true,
+    "captured": false,
+    "human_picture": "pending",
+    "native_pass": true,
+    "outputs": {
+      "1": {
+        "drawable": [
+          1920,
+          1080
+        ],
+        "frame": [
+          20,
+          59,
+          960,
+          568
+        ],
+        "fullscreen": false,
+        "key": false,
+        "mouse_ignored": false
+      },
+      "2": {
+        "drawable": [
+          1920,
+          1080
+        ],
+        "frame": [
+          1800,
+          89,
+          1920,
+          1080
+        ],
+        "fullscreen": true,
+        "key": false,
+        "mouse_ignored": true
+      }
+    },
+    "exit_code": 0,
+    "drained": true
+  },
+  "normal_launch": {
+    "finder": true,
+    "launchpad": true,
+    "arguments": [],
+    "cwd": "/",
+    "parent": "launchd",
+    "normal_command_q": true,
+    "running_update_normal_quit": true,
+    "project_scene_ids_preserved": true,
+    "schema": 10,
+    "enabled_outputs": 0
+  },
+  "scope": "Native assertions and sparse static screenshot geometry; human corner-pin acceptance, physical scanout, continuity and broader hardware pending."
+}

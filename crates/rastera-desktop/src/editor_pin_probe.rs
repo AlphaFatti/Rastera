@@ -1,6 +1,10 @@
 //! Owned native canvas events; fixture paths are self-contained, so installed runs need no repository cwd.
 use super::*;
 use std::time::Instant;
+unsafe extern "C" {
+    fn rastera_editor_escape_probe(handle: *mut std::ffi::c_void);
+    fn rastera_shared_presentation_probe(handle: *mut std::ffi::c_void) -> *mut c_char;
+}
 pub(super) struct PinProbe {
     folder: PathBuf,
     phase: u32,
@@ -26,6 +30,7 @@ impl PinProbe {
         &mut self,
         e: &mut Editor,
         p: &Consumer,
+        outputs: &std::collections::BTreeMap<u64, Consumer>,
         enabled: &mut std::collections::BTreeSet<u64>,
     ) -> Result<bool, String> {
         match self.phase {
@@ -70,6 +75,8 @@ impl PinProbe {
                     width: 640.,
                     height: 360.,
                 };
+                e.doc.layer_mut(v).unwrap().pin.corners =
+                    [[0.1, 0.], [1., 0.], [0., 1.], [0.9, 1.]];
                 if let Content::Media(id) = e.doc.layer(v).unwrap().content {
                     e.doc.playbacks.get_mut(&id).unwrap().looping = Some(true);
                 }
@@ -82,6 +89,8 @@ impl PinProbe {
                     width: 640.,
                     height: 360.,
                 };
+                e.doc.layer_mut(g).unwrap().pin.corners =
+                    [[0., 0.], [1., 0.1], [0.1, 0.9], [0.9, 1.]];
                 e.selected = Some(id);
                 e.tool = Tool::CornerPin;
                 e.publish();
@@ -148,7 +157,18 @@ impl PinProbe {
                 if e.gesture.is_none() {
                     return Err("Cancel fixture did not start a gesture".into());
                 }
-                e.cancel_gesture();
+                unsafe { rastera_editor_escape_probe(p.handle.as_ptr()) };
+                self.phase = 30;
+                self.start = Instant::now();
+                return Ok(false);
+            }
+            30 => {
+                if e.gesture.is_some() {
+                    if self.start.elapsed().as_secs() < 1 {
+                        return Ok(false);
+                    }
+                    return Err("AppKit Escape did not cancel active gesture".into());
+                }
                 if e.doc != *self.before.as_ref().unwrap() {
                     return Err("Pin gesture cancellation changed document".into());
                 }
@@ -245,6 +265,71 @@ impl PinProbe {
                         return Err("Moving source has no frame".into());
                     }
                 }
+                let mut views = serde_json::Map::new();
+                for (&id, out) in outputs {
+                    let ptr = unsafe { rastera_shared_presentation_probe(out.handle.as_ptr()) };
+                    let state: serde_json::Value =
+                        serde_json::from_slice(unsafe { CStr::from_ptr(ptr) }.to_bytes())
+                            .map_err(|e| e.to_string())?;
+                    unsafe { rastera_editor_free_string(ptr) };
+                    if let Some(target) = e
+                        .destinations
+                        .preferences
+                        .get(&id)
+                        .filter(|d| d.fullscreen)
+                        .and_then(|d| d.display.as_ref())
+                        .and_then(|id| {
+                            e.destinations
+                                .discovery
+                                .displays
+                                .iter()
+                                .find(|d| d.id == *id)
+                        })
+                    {
+                        if state["fullscreen"] != true
+                            || serde_json::from_value::<[f64; 4]>(state["frame"].clone())
+                                .map_err(|e| e.to_string())?
+                                != target.frame
+                            || state["drawable"] != serde_json::json!(target.pixels)
+                        {
+                            return Err(format!("Fullscreen placement/backing assertion failed: native={} expected_frame={:?} expected_pixels={:?}",state,target.frame,target.pixels));
+                        }
+                    }
+                    views.insert(id.to_string(), state);
+                }
+                let layer=e.doc.layers.iter().find(|l|matches!(l.content,Content::Image(source) if e.doc.images[&source].path.ends_with("grid.png"))).unwrap();
+                let selected = layer.id;
+                let mut samples = vec![];
+                for row in 0..6 {
+                    for col in 0..8 {
+                        let uv = [
+                            (col as f64 * 120. + 100.) / 960.,
+                            (row as f64 * 90. + 75.) / 540.,
+                        ];
+                        if uv[0] <= layer.crop.left as f64
+                            || uv[0] >= layer.crop.right as f64
+                            || uv[1] <= layer.crop.top as f64
+                            || uv[1] >= layer.crop.bottom as f64
+                        {
+                            continue;
+                        }
+                        let point = layer.source_canvas(uv).unwrap();
+                        if point[0] >= 0. && point[0] < 3840. && point[1] >= 0. && point[1] < 1080.
+                        {
+                            samples.push(serde_json::json!({"canvas":point,"rgb":if (row+col)%2==1{[100,210,230]}else{[240,240,240]}}));
+                        }
+                    }
+                }
+                e.selected = Some(selected);
+                e.tool = Tool::CornerPin;
+                std::fs::write(
+                    self.folder.join("pin-native-state.json"),
+                    serde_json::to_vec_pretty(
+                        &serde_json::json!({"outputs":views,"samples":samples}),
+                    )
+                    .unwrap(),
+                )
+                .map_err(|e| e.to_string())?;
                 log(format!("corner_pin_probe passed=1 gesture_history=1 cancel=1 crop_invariant=1 cache_reused=1 text=1 duplicate=1 scene=1 save_reopen=1 outputs={}\n",enabled.len()));
                 return Ok(true);
             }

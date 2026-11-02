@@ -104,6 +104,12 @@ impl Editor {
             self.mode = mode;
         }
     }
+    pub(super) fn cancel_view_gesture(&mut self) {
+        if let Some(g) = self.view_gesture.take() {
+            self.doc = g.before;
+            self.publish();
+        }
+    }
     pub(super) fn finish_view_gesture(&mut self) {
         if let Some(g) = self.view_gesture.take() {
             self.history.record(g.before, &self.doc);

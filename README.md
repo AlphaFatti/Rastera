@@ -4,6 +4,21 @@ Rastera is a free, open-source live video and presentation application in early 
 
 The long-term [architecture blueprint](docs/architecture.md) describes planned work, not implemented capabilities. See [development status](docs/development-status.md) for the current scope and verification record. An application source license still needs to be selected before a public release.
 
+## Corner Pin and installed development app
+
+```sh
+./tools/build-app.sh --install
+open "$HOME/Applications/Rastera.app"
+# Explicit installation destination, if desired:
+./tools/build-app.sh --install --destination "$HOME/Applications/Rastera.app"
+```
+
+Installation updates an existing normal `/Applications/Rastera.app` or `~/Applications/Rastera.app`; otherwise it uses `~/Applications/Rastera.app`. Launch the installed copy normally from Finder or Launchpad. It is a real signed release bundle with embedded fonts/shaders and bundled notices; Cargo, VS Code, a repository working directory and developer variables are unnecessary at runtime. This is local ad-hoc development signing, not a notarized public distribution. No icon asset is required. The installer verifies a fresh staged bundle before replacement and waits for normal Rastera quit/recovery flush, preserving projects and preferences.
+
+In **Canvas**, choose **Transform**, **Crop** or **Corner Pin**. Pin image, camera, video/GIF or editable text layers with four labelled handles or visible-corner X/Y controls. Reset Corner Pin preserves crop, ordinary placement and source reference. Selection follows the warped polygon; body dragging moves it; Escape cancels a gesture. Warped crops preserve surviving source positions. Handles/guides are operator-only. Geometry edits reuse prepared resources and shared playback/capture. Projects now use **schema 10**, explicitly migrating versions 1–9 and older recovery journals to identity pins.
+
+[Controls, transform conventions, installation and measured verification](docs/source-corner-pin.md) distinguish unit/native/launcher checks from pending human picture/hardware acceptance. Existing pause/capture limitations remain; the broader UI overhaul stays deferred.
+
 ## Media and quick scenes (0.0.2-dev review build)
 
 ```sh
@@ -18,7 +33,7 @@ Import images, **Insert Video / GIF…**, or add an authorized camera. Picture l
 
 **Restore Last Session** retains unsaved edits, original project identity/path, active scene, selection/mode, window/panel layout and media positions/states in a separate bounded recovery journal. **Restore enabled outputs on startup** defaults off and checks exact saved machine/destination preferences. Explicit --project overrides restoration; --no-restore bypasses it. --session-dir=/absolute/scratch/path isolates recovery and destination preferences for tests. Camera authorization is never requested by restoration.
 
-Projects now save as **schema 9**, explicitly migrating versions 1–8 (including schema-5 capture projects). Missing files/devices retain document references and useful status. Limits: 16 scenes, 128 layers per scene, two capture definitions and four file-playback instances up to 1920×1080 pixels each (either orientation). The independent producer, four-texture pool, bounded generations and native completion-held leases remain. #17151A belongs to the operator workspace, independently of canvas backgrounds.
+Projects now save as **schema 10**, explicitly migrating versions 1–9 (including schema-5 capture projects). Missing files/devices retain document references and useful status. Limits: 16 scenes, 128 layers per scene, two capture definitions and four file-playback instances up to 1920×1080 pixels each (either orientation). The independent producer, four-texture pool, bounded generations and native completion-held leases remain. #17151A belongs to the operator workspace, independently of canvas backgrounds.
 
 See [media/scenes implementation, commands, measurements and limitations](docs/media-scenes.md). Native API/replay checks and human picture verification are reported separately; existing pause/capture limits and production acceptance remain pending. The sections below preserve earlier checkpoint details; schema 9 and this recovery policy supersede their schema-5/no-recovery descriptions.
 
@@ -31,7 +46,7 @@ open target/Rastera.app
 
 Use **Add Capture Device…**, allow Rastera camera access, choose an AVFoundation device and resolution/frame rate, then add it to the canvas. The signed development bundle has the camera usage description/entitlement and stable identity needed for consistent native permission testing. Capture layers share sessions when duplicated and support normal editing/history. The inspector reports actual BGRA format/cadence and device status; missing/unauthorized sources remain saved and draw black.
 
-Two source definitions are supported, up to 1920×1080 pixels (either orientation) at 1–60 fps. This is a bounded upload-copy path, not zero-copy capture; the display path still has no CPU canvas readback. The capture checkpoint used schema 5; current projects save as schema 9 with explicit v1–v8 migration. Existing assigned-display destinations and Disable All Outputs remain; that recovery action does not stop referenced camera sources. Audio and the native DeckLink SDK remain future work.
+Two source definitions are supported, up to 1920×1080 pixels (either orientation) at 1–60 fps. This is a bounded upload-copy path, not zero-copy capture; the display path still has no CPU canvas readback. The capture checkpoint used schema 5; current projects save as schema 10 with explicit v1–v9 migration. Existing assigned-display destinations and Disable All Outputs remain; that recovery action does not stop referenced camera sources. Audio and the native DeckLink SDK remain future work.
 
 [Capture architecture, exact commands, measured devices and remaining checks](docs/capture-devices.md) separate automated/native evidence from the user's successful FaceTime-plus-OBS/DVD picture observation. [v0.0.1](https://github.com/AlphaFatti/Rastera/tree/v0.0.1) is the prior fullscreen development-preview checkpoint; main remains unmerged.
 
@@ -53,7 +68,7 @@ Try all seven output presets (first four windows open initially):
 cargo run --release --locked -p rastera-desktop --bin canvas-editor -- --project=examples/dynamic-viewports.rastera.json --outputs=4
 ```
 
-Add/Remove Selected and each viewport’s Open clean output control are in Viewports mode. Closing a window preserves its logical definition. Undoing deletion restores the definition with its original ID, without reopening the window. Projects save as schema 9 with portable project identity and reusable source/scene definitions; versions 1–8 migrate explicitly, preserving their sampling. Saved empty viewport lists stay empty. Assigned-display fullscreen is available as a review prototype; see below.
+Add/Remove Selected and each viewport’s Open clean output control are in Viewports mode. Closing a window preserves its logical definition. Undoing deletion restores the definition with its original ID, without reopening the window. Projects save as schema 10 with portable project identity and reusable source/scene definitions; versions 1–9 migrate explicitly, preserving their sampling. Saved empty viewport lists stay empty. Assigned-display fullscreen is available as a review prototype; see below.
 
 ## Assigned-display fullscreen (review prototype)
 

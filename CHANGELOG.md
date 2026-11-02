@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.0.2-dev — capture-device review work
+## 0.0.2-dev — development review work
+
+- Added stable full-source perspective Corner Pin editing, schema-10 project/recovery migration, warped selection/crop/resize and a staged verified installed-app workflow. See docs/source-corner-pin.md for automated/native/external-display results; new human picture acceptance remains pending.
 
 - Added per-layer source crops, native muted video/streaming GIF playback, canvas backgrounds, quick scenes and bounded startup recovery with opt-in exact output restoration. Schema 9 migrates existing projects. See docs/media-scenes.md for actual automated/native results and pending human/hardware checks.
 
