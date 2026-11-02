@@ -8,6 +8,8 @@ mod display;
 mod dynamic;
 #[path = "editor_media_probe.rs"]
 mod media;
+#[path = "editor_pin_probe.rs"]
+mod pin;
 unsafe extern "C" {
     fn rastera_editor_close_output(handle: *mut std::ffi::c_void);
     fn rastera_editor_replay(
@@ -30,10 +32,14 @@ pub(super) struct Probe {
     display: Option<display::DisplayProbe>,
     capture: Option<capture::CaptureProbe>,
     media: Option<media::MediaProbe>,
+    pin: Option<pin::PinProbe>,
 }
 impl Probe {
     pub fn new(folder: PathBuf) -> Self {
         Self {
+            pin: std::env::args()
+                .any(|a| a == "--corner-pin-probe")
+                .then(|| pin::PinProbe::new(folder.clone())),
             media: std::env::args()
                 .any(|a| a == "--media-probe")
                 .then(|| media::MediaProbe::new(folder.clone())),
@@ -73,6 +79,16 @@ impl Probe {
     ) -> bool {
         if e.busy_file || e.pending_load.is_some() || e.engine.applied() != e.revision {
             return false;
+        }
+        if let Some(pin) = &mut self.pin {
+            return match pin.tick(e, preview, enabled) {
+                Ok(done) => done,
+                Err(error) => {
+                    log(format!("corner_pin_probe failed=1 error={error}\n"));
+                    e.error = Some(error);
+                    true
+                }
+            };
         }
         if let Some(media) = &mut self.media {
             return match media.tick(e, preview, enabled) {

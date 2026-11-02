@@ -465,6 +465,7 @@ struct Vertex {@builtin(position) pos:vec4f,@location(0) uv:vec2f}
 @vertex fn vs(@builtin(vertex_index) i:u32)->Vertex {
     var uv=array<vec2f,6>(vec2f(0,0),vec2f(1,0),vec2f(0,1),vec2f(0,1),vec2f(1,0),vec2f(1,1));
     let local=layer.crop.xy+uv[i]*layer.crop.zw;
+    if(layer.properties.w>0.5){let p=layer.rect.xy+uv[i]*layer.rect.zw;return Vertex(vec4f(p.x/layer.canvas.x*2.0-1.0,1.0-p.y/layer.canvas.y*2.0,0,1),local*layer.properties.yz);}
     let v=vec3f(local,1.0);
     let h=vec3f(dot(layer.h0.xyz,v),dot(layer.h1.xyz,v),dot(layer.h2.xyz,v));
     let p=layer.rect.xy*h.z+h.xy*layer.rect.zw;
@@ -749,7 +750,8 @@ fn prepare(
         } else {
             [1., 1.]
         };
-        let full = layer.crop.full_rect(r);
+        let identity = layer.pin == crate::pin::Pin::default();
+        let full = if identity { r } else { layer.crop.full_rect(r) };
         let h = layer.pin.homography()?.rows;
         let bytes: Vec<u8> = [
             full.x,
@@ -759,7 +761,7 @@ fn prepare(
             layer.opacity,
             uv[0],
             uv[1],
-            0.,
+            if identity { 1. } else { 0. },
             doc.canvas[0] as f32,
             doc.canvas[1] as f32,
             0.,

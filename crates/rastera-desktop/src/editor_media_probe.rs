@@ -253,7 +253,7 @@ impl MediaProbe {
                     .unwrap()
                     .clone();
                 e.selected = Some(layer.id);
-                e.crop_edit = true;
+                e.tool = Tool::Crop;
                 self.crop_before = Some(e.doc.clone());
                 self.crop_history = Some(e.history.clone());
                 Probe::event(preview, 1, [layer.rect.x, layer.rect.y]);
@@ -296,7 +296,7 @@ impl MediaProbe {
                 if e.doc != after {
                     return Err("Native crop redo failed".into());
                 }
-                e.crop_edit = false;
+                e.tool = Tool::Transform;
                 self.phase = 6;
                 self.start = Instant::now();
             }

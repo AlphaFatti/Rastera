@@ -276,7 +276,13 @@ impl Editor {
                 .and_then(|id| self.doc.layer(id))
                 .filter(|l| l.visible)
             {
-                let q = l.rect.corners();
+                let q = l.visible_corners();
+                if self.tool == super::Tool::CornerPin {
+                    for (i, name) in ["TL", "TR", "BL", "BR"].into_iter().enumerate() {
+                        names.push(CString::new(name).unwrap());
+                        label_values.push((q[i], t::ELECTRIC_YELLOW));
+                    }
+                }
                 let order = [0, 1, 3, 2];
                 for i in 0..4 {
                     line(
@@ -290,8 +296,21 @@ impl Editor {
                         1.5,
                         0,
                     );
-                    if !l.locked {
-                        line(q[i], q[i], t::SIGNAL_MINT, 1., 1);
+                    if !l.locked
+                        && !(self.tool == super::Tool::Crop
+                            && matches!(l.content, super::Content::Text(_)))
+                    {
+                        line(
+                            q[i],
+                            q[i],
+                            if self.tool == super::Tool::CornerPin {
+                                t::ELECTRIC_YELLOW
+                            } else {
+                                t::SIGNAL_MINT
+                            },
+                            1.,
+                            1,
+                        );
                     }
                 }
             }

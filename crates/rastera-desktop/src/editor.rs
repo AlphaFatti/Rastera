@@ -120,6 +120,12 @@ impl Drop for Files {
         }
     }
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tool {
+    Transform,
+    Crop,
+    CornerPin,
+}
 struct Gesture {
     before: Document,
     id: Id,
@@ -128,6 +134,7 @@ struct Gesture {
     corner: Option<usize>,
     aspect: Option<f32>,
     crop: Option<rastera_core::crop::Crop>,
+    pin: bool,
 }
 enum Action {
     AddText,
@@ -154,7 +161,8 @@ pub(super) struct Editor {
     selected: Option<Id>,
     history: History,
     gesture: Option<Gesture>,
-    crop_edit: bool,
+    tool: Tool,
+    pin_error: Option<String>,
     live_scene: u64,
     session: super::session::Session,
     pub(super) clean_windows: std::collections::BTreeMap<u64, [f64; 4]>,
@@ -226,7 +234,8 @@ impl Editor {
             selected: restore.as_ref().and_then(|s| s.selected),
             history: History::default(),
             gesture: None,
-            crop_edit: false,
+            tool: Tool::Transform,
+            pin_error: None,
             live_scene,
             clean_windows: restore
                 .as_ref()
@@ -282,6 +291,13 @@ impl Editor {
     fn finish_inspector(&mut self) {
         if let Some(before) = self.inspector_before.take() {
             self.history.record(before, &self.doc);
+        }
+    }
+    fn cancel_gesture(&mut self) {
+        if let Some(g) = self.gesture.take() {
+            self.doc = g.before;
+            self.pin_error = None;
+            self.publish();
         }
     }
     fn finish_gesture(&mut self) {
@@ -505,6 +521,10 @@ impl Editor {
             if !unsafe { rastera_editor_pointer(preview.handle.as_ptr(), &mut event) } {
                 break;
             }
+            if event.kind == 4 {
+                self.cancel_gesture();
+                continue;
+            }
             if self.pending_load.is_some() || self.settings.is_some() || self.font_dialog {
                 continue;
             }
@@ -532,14 +552,20 @@ impl Editor {
                     let handle = self
                         .selected
                         .and_then(|id| self.doc.layer(id))
-                        .filter(|l| !l.locked && l.visible)
+                        .filter(|l| {
+                            !l.locked
+                                && l.visible
+                                && !(self.tool == Tool::Crop
+                                    && matches!(l.content, Content::Text(_)))
+                        })
                         .and_then(|l| {
-                            map.handle(
-                                l.rect,
-                                p,
-                                8. * event.scale * self.doc.canvas[0] as f32 / map.fit[2],
-                            )
-                            .map(|corner| (l.id, corner))
+                            l.visible_corners()
+                                .iter()
+                                .position(|q| {
+                                    (p[0] - q[0]).hypot(p[1] - q[1])
+                                        <= 8. * event.scale * self.doc.canvas[0] as f32 / map.fit[2]
+                                })
+                                .map(|corner| (l.id, corner))
                         });
                     let (id, corner) = if let Some((id, corner)) = handle {
                         (Some(id), Some(corner))
@@ -560,7 +586,8 @@ impl Editor {
                             rect,
                             corner,
                             aspect: self.doc.aspect(id),
-                            crop: if self.crop_edit
+                            pin: self.tool == Tool::CornerPin,
+                            crop: if self.tool == Tool::Crop
                                 && !matches!(self.doc.layer(id).unwrap().content, Content::Text(_))
                             {
                                 Some(self.doc.layer(id).unwrap().crop)
@@ -572,34 +599,60 @@ impl Editor {
                 }
                 2 | 3 => {
                     if let Some(g) = &self.gesture {
-                        if let (Some(crop), Some(corner)) = (g.crop, g.corner) {
-                            let full = crop.full_rect(g.rect);
-                            let next =
-                                crop.corner(corner, full, [p[0] - g.start[0], p[1] - g.start[1]]);
-                            if let Some(layer) = self.doc.layer_mut(g.id) {
-                                layer.crop = next;
-                                layer.rect = next.rect(full);
+                        let original = g.before.layer(g.id).unwrap();
+                        let mut candidate = original.clone();
+                        let result = if let Some(corner) = g.corner {
+                            if g.pin {
+                                let mut corners = original.visible_corners();
+                                corners[corner][0] += p[0] - g.start[0];
+                                corners[corner][1] += p[1] - g.start[1];
+                                candidate.set_visible_corners(corners)
+                            } else if let Some(crop) = g.crop {
+                                let q = original.visible_corners()[corner];
+                                let start = original.source_point(q);
+                                let current = original.source_point([
+                                    q[0] + p[0] - g.start[0],
+                                    q[1] + p[1] - g.start[1],
+                                ]);
+                                if let (Some(start), Some(current)) = (start, current) {
+                                    let next = crop.corner(
+                                        corner,
+                                        Rect {
+                                            x: 0.,
+                                            y: 0.,
+                                            width: 1.,
+                                            height: 1.,
+                                        },
+                                        [
+                                            (current[0] - start[0]) as f32,
+                                            (current[1] - start[1]) as f32,
+                                        ],
+                                    );
+                                    candidate.set_crop(next)
+                                } else {
+                                    Err("Crop pointer crosses a projective pole".into())
+                                }
+                            } else {
+                                original
+                                    .resize_pinned(corner, g.start, p, g.aspect)
+                                    .map(|r| candidate.rect = r)
                             }
-                            self.publish();
-                            if event.kind == 3 {
-                                self.finish_gesture();
-                            }
-                            continue;
-                        }
-                        let rect = if let Some(corner) = g.corner {
-                            scene::resize_drag(g.rect, corner, g.start, p, g.aspect)
                         } else {
-                            Rect {
-                                x: (g.rect.x + (p[0] - g.start[0])).clamp(-32768., 32768.),
-                                y: (g.rect.y + (p[1] - g.start[1])).clamp(-32768., 32768.),
-                                ..g.rect
-                            }
+                            candidate.rect.x =
+                                (g.rect.x + p[0] - g.start[0]).clamp(-32768., 32768.);
+                            candidate.rect.y =
+                                (g.rect.y + p[1] - g.start[1]).clamp(-32768., 32768.);
+                            candidate.validate_pin()
                         };
-                        if let Some(layer) = self.doc.layer_mut(g.id) {
-                            if layer.rect != rect {
-                                layer.rect = rect;
-                                self.publish();
+                        match result {
+                            Ok(()) => {
+                                self.pin_error = None;
+                                if self.doc.layer(g.id) != Some(&candidate) {
+                                    *self.doc.layer_mut(g.id).unwrap() = candidate;
+                                    self.publish();
+                                }
                             }
+                            Err(error) => self.pin_error = Some(error),
                         }
                     }
                     if event.kind == 3 {
@@ -654,6 +707,9 @@ impl Editor {
         outputs: &mut std::collections::BTreeSet<u64>,
     ) -> egui::Rect {
         self.poll();
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.cancel_gesture();
+        }
         self.destinations.context(
             &self.doc.project_id,
             self.project.as_deref(),
@@ -898,7 +954,7 @@ impl Editor {
                 _ => {}
             }
             self.selected = None;
-            self.crop_edit = false;
+            self.tool = Tool::Transform;
         }
         if self.doc != scenes_before {
             self.history.record(scenes_before, &self.doc);
@@ -1067,6 +1123,18 @@ impl Editor {
                     ui.selectable_value(&mut mode, Mode::Viewports, "Viewports");
                 });
                 self.change_mode(mode);
+                if self.mode == Mode::Canvas {
+                    let mut tool = self.tool;
+                    ui.selectable_value(&mut tool, Tool::Transform, "Transform");
+                    ui.selectable_value(&mut tool, Tool::Crop, "Crop");
+                    ui.selectable_value(&mut tool, Tool::CornerPin, "Corner Pin");
+                    if tool != self.tool {
+                        self.finish_gesture();
+                        self.finish_inspector();
+                        self.tool = tool;
+                        self.pin_error = None;
+                    }
+                }
                 ui.add_enabled_ui(!loading, |ui| {
                     for (label, a) in [
                         ("Import image…", Action::Import),
@@ -1280,16 +1348,26 @@ impl Editor {
                         if let Some(size)=source_size {
                             ui.add_enabled_ui(!loading&&!layer.locked,|ui|{
                                 ui.separator();ui.label("Source crop · pixels");
-                                ui.checkbox(&mut self.crop_edit,"Edit crop with corner handles");
+                                ui.small("Choose Crop in the Canvas tools to drag crop edges.");
                                 let mut crop=layer.crop;let mut crop_changed=false;
                                 let mut margins=[crop.left*size[0] as f32,crop.top*size[1] as f32,(1.-crop.right)*size[0] as f32,(1.-crop.bottom)*size[1] as f32];
                                 for(i,label)in ["Left","Top","Right","Bottom"].into_iter().enumerate(){ui.horizontal(|ui|{ui.label(label);let r=ui.add(egui::DragValue::new(&mut margins[i]).speed(1.).range(0.0..=size[i%2] as f32-1.));crop_changed|=r.changed();ended|=r.drag_stopped()||r.lost_focus();});}
                                 crop.left=margins[0]/size[0] as f32;crop.top=margins[1]/size[1] as f32;crop.right=1.-margins[2]/size[0] as f32;crop.bottom=1.-margins[3]/size[1] as f32;
                                 if ui.button("Reset Crop").clicked(){crop=rastera_core::crop::Crop::default();crop_changed=true;ended=true;}
                                 if crop_changed&&crop!=layer.crop{if let Err(e)=layer.set_crop(crop){ui.colored_label(egui::Color32::YELLOW,e);}}
-                                ui.small("Crop removes pixels without stretching. Turn crop editing off to resize.");
+                                ui.small("Crop removes pixels without stretching. Choose Transform to resize.");
                             });
                         }
+                        if layer.pin!=rastera_core::pin::Pin::default(){ui.colored_label(egui::Color32::LIGHT_GREEN,"Corner Pin active");}
+                        if self.tool==Tool::CornerPin{
+                            ui.add_enabled_ui(!loading&&!layer.locked,|ui|{
+                                ui.separator();ui.label("Visible corner positions · canvas pixels");let mut corners=layer.visible_corners();let mut changed=false;
+                                for(i,name)in ["TL","TR","BL","BR"].into_iter().enumerate(){ui.horizontal(|ui|{ui.label(name);for (axis,value)in corners[i].iter_mut().enumerate(){let r=ui.add(egui::DragValue::new(value).prefix(if axis==0{"X "}else{"Y "}).range(-65536.0..=65536.0));changed|=r.changed();ended|=r.drag_stopped()||r.lost_focus();}});}
+                                if changed{match layer.set_visible_corners(corners){Ok(())=>self.pin_error=None,Err(e)=>self.pin_error=Some(e)}}
+                                if ui.button("Reset Corner Pin").clicked(){layer.pin=rastera_core::pin::Pin::default();self.pin_error=None;ended=true;}
+                            });
+                        }
+                        if let Some(error)=&self.pin_error{ui.colored_label(egui::Color32::YELLOW,error);}
                         let source = layer.content.clone();
                         let locked = layer.locked;
                         if let Content::Media(id)=source {
@@ -1356,10 +1434,18 @@ if ui.button("Restart").clicked(){s.seek=Some(0.);s.playing=true;}let mut pos=s.
                 });
             });
             if self.doc != before {
-                if self.inspector_before.is_none() {
-                    self.inspector_before = Some(before);
+                match self.doc.validate() {
+                    Ok(()) => {
+                        if self.inspector_before.is_none() {
+                            self.inspector_before = Some(before);
+                        }
+                        self.publish();
+                    }
+                    Err(error) => {
+                        self.doc = before;
+                        self.pin_error = Some(error);
+                    }
                 }
-                self.publish();
             }
             if ended {
                 self.finish_inspector();

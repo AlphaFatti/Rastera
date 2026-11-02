@@ -129,11 +129,33 @@ impl Pin {
 }
 impl Layer {
     pub fn source_canvas(&self, uv: [f64; 2]) -> Option<[f32; 2]> {
+        if self.pin == Pin::default() {
+            let c = self.crop;
+            return Some([
+                (self.rect.x as f64
+                    + (uv[0] - c.left as f64) / (c.right - c.left) as f64 * self.rect.width as f64)
+                    as f32,
+                (self.rect.y as f64
+                    + (uv[1] - c.top as f64) / (c.bottom - c.top) as f64 * self.rect.height as f64)
+                    as f32,
+            ]);
+        }
         let f = self.crop.full_rect(self.rect);
         let q = self.pin.homography().ok()?.map(uv)?;
         Some([f.x + q[0] as f32 * f.width, f.y + q[1] as f32 * f.height])
     }
     pub fn source_point(&self, p: [f32; 2]) -> Option<[f64; 2]> {
+        if self.pin == Pin::default() {
+            let c = self.crop;
+            return Some([
+                c.left as f64
+                    + (p[0] - self.rect.x) as f64 / self.rect.width as f64
+                        * (c.right - c.left) as f64,
+                c.top as f64
+                    + (p[1] - self.rect.y) as f64 / self.rect.height as f64
+                        * (c.bottom - c.top) as f64,
+            ]);
+        }
         let f = self.crop.full_rect(self.rect);
         self.pin.homography().ok()?.inverse()?.map([
             ((p[0] - f.x) / f.width) as f64,
