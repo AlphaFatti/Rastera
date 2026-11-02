@@ -520,3 +520,8 @@ extern "C" char *rastera_audio_resample_measure(double rate,double hz,bool impul
     for(UInt32 i=0;i<count;i++){double v=converter.output[i*2],index=producedTotal+i;if(std::abs(v)>peak){peak=std::abs(v);peakFrame=(uint64_t)index;}if(index>=rate/2.){power+=v*v;double angle=2.*M_PI*alias*index/rate;projectionR+=v*std::cos(angle);projectionI+=v*std::sin(angle);measured++;}}producedTotal+=count;}
     return json(@{@"rate":@(rate),@"hz":@(hz),@"impulse":@(impulse),@"produced_frames":@(producedTotal),@"rms":@(measured?std::sqrt(power/measured):0.),@"tone_amplitude":@(measured?2.*std::hypot(projectionR,projectionI)/measured:0.),@"peak":@(peak),@"peak_frame":@(peakFrame),@"expected_impulse_frame":@(rate/2.),@"read_ahead_48k_frames":@(converter.readAhead),@"errors":@(errors)});
 }}
+// Diagnostic replay enters the same app-local event queue as the operator shortcut.
+extern "C" void rastera_audio_mute_probe(){
+    NSCAssert(NSThread.isMainThread,@"Shortcut replay on main");
+    for(int i=0;i<2;i++){NSEvent *event=[NSEvent keyEventWithType:i?NSEventTypeKeyUp:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:NSEventModifierFlagCommand|NSEventModifierFlagShift timestamp:CACurrentMediaTime() windowNumber:NSApp.keyWindow.windowNumber context:nil characters:@"M" charactersIgnoringModifiers:@"M" isARepeat:NO keyCode:46];[NSApp postEvent:event atStart:NO];}
+}

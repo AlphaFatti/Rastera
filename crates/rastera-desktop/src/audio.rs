@@ -486,6 +486,7 @@ pub struct Audio {
     pub open: bool,
     clocks: BTreeMap<u64, Arc<Clock>>,
     source_clocks: BTreeMap<u64, Arc<Clock>>,
+    video_controls: BTreeMap<u64, Arc<rastera_core::media::Control>>,
     namespace: String,
     project_identity: String,
     runtime_generation: u64,
@@ -1007,9 +1008,10 @@ impl Audio {
             status: Status::default(),
             active: false,
             patches: BTreeMap::new(),
-            open: false,
+            open: std::env::args().any(|a| a == "--audio-mixer"),
             clocks: BTreeMap::new(),
             source_clocks: BTreeMap::new(),
+            video_controls: BTreeMap::new(),
             namespace: String::new(),
             project_identity: String::new(),
             runtime_generation: 0,
@@ -1056,6 +1058,7 @@ impl Audio {
         self.source_clocks
             .retain(|id, _| doc.audio.sources.contains_key(id));
         let mut files = BTreeMap::new();
+        self.video_controls.clear();
         for (&id, source) in &doc.audio.sources {
             match &source.origin {
                 Origin::Playback(playback) => {
@@ -1070,6 +1073,7 @@ impl Audio {
                             ),
                         );
                         self.source_clocks.insert(id, control.audio_clock.clone());
+                        self.video_controls.insert(id, control.clone());
                     }
                 }
                 Origin::File { path, .. } => {
@@ -1140,6 +1144,9 @@ impl Audio {
     }
     /// Bounded future-producer control path; existing video uses its already-shared transport UI.
     pub fn command_source(&self, id: u64, command: Command) -> Result<(), String> {
+        if let Some(control) = self.video_controls.get(&id) {
+            return video_command(control, command);
+        }
         self.commands
             .try_send((id, command))
             .map_err(|_| "Audio transport queue full; command not applied".into())
@@ -1938,5 +1945,62 @@ mod tests {
             .send(FileCommand::Transport(Command::Stop))
             .unwrap();
         wait(&|o| !o.playing && o.sample == 0);
+    }
+}
+
+// Control-plane latest-state transport; native media worker remains the sole clock writer.
+fn video_command(control: &rastera_core::media::Control, command: Command) -> Result<(), String> {
+    if let Command::Gain { at, value } = command {
+        return if control.audio_clock.schedule_gain(at, value) {
+            Ok(())
+        } else {
+            Err("Invalid scheduled gain".into())
+        };
+    }
+    let mut state = control
+        .state
+        .lock()
+        .map_err(|_| "Video transport unavailable")?;
+    match command {
+        Command::Play => state.playing = true,
+        Command::Pause => state.playing = false,
+        Command::Stop => {
+            state.playing = false;
+            state.seek = Some(0.);
+        }
+        Command::Restart => {
+            state.playing = true;
+            state.seek = Some(0.);
+        }
+        Command::Seek(sample) => {
+            if sample < 0 || sample as f64 > state.duration * 48000. {
+                return Err("Seek outside source duration".into());
+            }
+            state.seek = Some(sample as f64 / 48000.);
+        }
+        Command::Gain { .. } => unreachable!(),
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod video_transport_tests {
+    use super::*;
+    #[test]
+    fn shared_video_commands_keep_one_transport_and_validate_seek() {
+        let hub = rastera_core::capture::Hub::default();
+        let c = rastera_core::media::Control::new(hub.slot("test"), true, 6.);
+        video_command(&c, Command::Pause).unwrap();
+        assert!(!c.state.lock().unwrap().playing);
+        video_command(&c, Command::Seek(48000)).unwrap();
+        assert_eq!(c.state.lock().unwrap().seek, Some(1.));
+        assert!(video_command(&c, Command::Seek(48000 * 7)).is_err());
+        video_command(&c, Command::Restart).unwrap();
+        {
+            let s = c.state.lock().unwrap();
+            assert!(s.playing);
+            assert_eq!(s.seek, Some(0.));
+        }
+        video_command(&c, Command::Stop).unwrap();
+        assert!(!c.state.lock().unwrap().playing);
     }
 }

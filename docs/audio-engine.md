@@ -80,10 +80,45 @@ The bundle preserves `org.rastera.desktop.dev`, identifier-only local ad-hoc sig
 
 ## Verification record
 
-Required lint/tests/release and signed installation pass at the implementation checkpoint: **20 portable audio tests, 68 core tests, 20 desktop destination/audio test executions and one original desktop test = 109 Rust test executions**; 14 Python tests pass. Tests cover DSP response/bypass, linking, smoothing, routing/mute/summing/ten buses, bounded queues, simulated drift, source dedup, channel mapping/history, scene membership, migration and project/recovery round trips. Simulation is separate from hardware evidence.
+Required lint/tests/release and signed installation pass at the implementation checkpoint: **20 portable audio tests, 68 core tests, 22 desktop destination/audio test executions and one original desktop test = 111 Rust test executions**; 14 Python tests pass. Tests cover DSP response/bypass, linking, smoothing, routing/mute/summing/ten buses, bounded queues, simulated drift, source dedup, channel mapping/history, scene membership, migration and project/recovery round trips. Simulation is separate from hardware evidence.
 
 The installed short native workflow verifies real decoded PCM/HAL content on MacBook speakers and Crestron, video pause silence/seek, Dual Stereo→Quad Mono→Dual Stereo with stable IDs, visual duplicate dedup, scene membership, project round trip and normal shutdown. Two 15-second prefill runs recorded zero new physical-device queue underruns/late mixer blocks. Source-PCM missing-sample counters remain nonzero around startup/seek/loop transitions; they are retained, not treated as zero simply because HAL callbacks continued.
 
-The ten-minute mixed-source trial and final launcher/recovery checks are in progress. Results, unavailable hardware checks and human observations will be added after completion. Existing operator-transition/capture-conditioned pauses, physical scanout/A/V sync, sustained operation beyond the measured trial and production acceptance remain pending.
+The ten-minute trial and final native results are recorded below. Final-build Launchpad verification remains pending: the user was using other applications, which interrupted the scripts, so further global mouse automation was stopped. The earlier pre-audio restoration Launchpad test passed; the final build was verified through a no-argument background Launch Services launch. Existing operator-transition/capture-conditioned pauses, physical scanout/A/V sync, sustained operation beyond the measured trial and production acceptance remain pending.
 
 References: [Core Audio IOProc](https://developer.apple.com/documentation/coreaudio/audiodeviceioproc), [AVAssetReaderTrackOutput](https://developer.apple.com/documentation/avfoundation/avassetreadertrackoutput), [AudioConverter input supply](https://developer.apple.com/documentation/audiotoolbox/audioconvertercomplexinputdataproc), [Core Media clock anchors](https://developer.apple.com/documentation/coremedia/cmsyncgetrelativerateandanchortime), [audio-input entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.device.audio-input), [capture authorization](https://developer.apple.com/documentation/avfoundation/requesting-authorization-to-capture-and-save-media).
+
+
+### Final measured results and scope
+
+[Sanitized summary and per-interval measurements](audio-engine-results.json) preserve all source-gap/queue counters, native timestamp intervals and unavailable clock estimates. The **600.007-second** uncaptured trial used optimized commit 9dad48a, H.264 + four-channel PCM movie, stereo WAV, MacBook Pro Microphone, MacBook Pro Speakers and Crestron. Physical devices reported 48 kHz /512-frame buffers. Microphone authorization was allowed by the user; actual input PCM varied throughout the trial, with sends Off. Camera discovery was omitted from that long run; a later installed short workflow explicitly refreshed discovery and verified FaceTime1280×720 frames plus the separately selected microphone linked to its picture definition. This distinction is retained in the artifact.
+
+| Measurement | Actual result | Scope |
+| --- | --- | --- |
+| Device queue underruns/overruns after trial start | 0 new on both physical outputs; 0 input overruns | Startup/short earlier failures are reported separately |
+| Late mixer blocks after trial start | 0 | 80 ms prefill; no hard real-time guarantee |
+| HAL content | About29.3million nonzero frames per output | Software delivered samples; not physical listening |
+| Max callback gap | Crestron10.768ms; speakers11.077ms; microphone11.143ms | Nominal512/48000 callback period10.667ms |
+| Output clock estimate | Both approximately−6.90ppm relative host | Input-only estimate unavailable (`null`); no physical genlock claim |
+| Native sampled queue | Crestron2576–3111, speakers2848–3374 frames, capacity8192 | Sparse observations; not every-sample high-water proof |
+| Source PCM misses | Video1,645,688 channel lookups; WAV841,188 | Includes generation/loop gaps; these counts are not hardware underruns or exact audible-gap durations |
+| Source decode/backpressure | Zero video backpressure events; one WAV event | Packets remain bounded; seeks/loops invalidate generations |
+| Process RSS | Initial169.7MiB, final227.1MiB, peak227.1MiB | Much growth during startup; later growth remains. No leak-free/endurance claim |
+| Native minimize/restore | Three operator cycles, all AX button/restore operations succeeded | No screenshot capture during trial; no physical continuity/listening assertion |
+
+Current nominal conversion uses Apple's AudioConverter outside callbacks. Native48→44.1kHz tests produced440Hz amplitude0.0999917 for expected0.1, above-Nyquist23kHz RMS4.52e−7, correct impulse peak and zero converter errors. Distinct220/330/440/550Hz signals survived a four-channel track, two stereo tracks and four mono tracks. First nonzero times retained0/125/250/375ms offsets as appropriate; seek2.25s was within two samples. WAV and AIFF both decoded correctly; the initial AIFF endianness failure was fixed and retested.
+
+Separate short device runs mixed ten distinguishable synthetic buses plus file PCM into both physical outputs. Another simultaneous run used the physical speakers at48kHz and Background Music virtual device at44.1kHz, with real HAL content and zero converter errors. This tests a virtual second rate, not another physical multichannel interface. Actual source/sends/DSP isolation and mono pan have portable tests; all ten hardware-facing bus signals were digitally observed, not individually listened to on twenty channels.
+
+Final short installed checks verified shared video Play/Pause/Seek controls, four-channel interpretation/ID restoration, source dedup, duplicated-scene participation, project roundtrip, camera/input frames, missing-assignment reporting, continued content on the unaffected device, reassignment/reopen and shared destination routing. App-local Shift–Command–M muted audio while both video windows remained open. Normal shutdown drained capture and0/4 canvas leases.
+
+Fresh-process recovery preserved exact mixer/document settings and separate running audio-file playheads; actual Command-Q completed normally. The restored mixer visibly showed **Enable Audio Outputs**, confirming startup-off. The final no-argument background launch ran the installed executable and retained both enabled video definitions, exact Crestron fullscreen coverage and the latest real document. Older backups were not restored over subsequent user edits. Application signing, camera access and new microphone access remain intact.
+
+A separate review profile is open in the background. It carries moderate file/video sends and−6dB first-two bus faders; microphone sends remain Off, and master activation starts off. These review gains differ from the quiet automated trial. It does not replace the real user session:
+
+```sh
+open -g -na "$HOME/Applications/Rastera.app" --args \
+  --session-dir=/tmp/rastera-audio-review/session --audio-mixer
+```
+
+Human physical listening/picture acceptance is pending. Physical multichannel capture, actual device unplug/replug, denied/restricted OS settings, optical/acoustic loopback latency/A/V offset and drift, broader format/hardware coverage and endurance beyond600seconds remain pending. Source seek/loop gaps are reproduced, and the existing video/operator/capture-conditioned pause limitations remain. Consequently this is a reviewable implementation checkpoint, not unconditional milestone/production acceptance. Next measured fixes are source loop pre-roll across transport generations and longer allocation/decoder-memory tracing, followed by physical A/V calibration; the slide/queue/UI engines are not implemented here.

@@ -1,6 +1,6 @@
 # Rastera
 
-Rastera is a free, open-source live video and presentation application in early development, targeting Apple silicon Macs first. A possible Windows port is future work. The ambition is a flexible live production canvas, output routing, and presentation workflow; the current application is an early scene-based image/text/capture/video/GIF canvas editor alongside preserved GPU diagnostic baselines.
+Rastera is a free, open-source live video and presentation application in early development, targeting Apple silicon Macs first. A possible Windows port is future work. The ambition is a flexible live production canvas, output routing, and presentation workflow; the current application is an early scene-based image/text/capture/video/GIF canvas editor and audio mixer alongside preserved GPU diagnostic baselines.
 
 The long-term [architecture blueprint](docs/architecture.md) describes planned work, not implemented capabilities. See [development status](docs/development-status.md) for the current scope and verification record. An application source license still needs to be selected before a public release.
 
@@ -26,7 +26,7 @@ open "$HOME/Applications/Rastera.app"
 
 Installation updates an existing normal `/Applications/Rastera.app` or `~/Applications/Rastera.app`; otherwise it uses `~/Applications/Rastera.app`. Launch the installed copy normally from Finder or Launchpad. It is a real signed release bundle with embedded fonts/shaders and bundled notices; Cargo, VS Code, a repository working directory and developer variables are unnecessary at runtime. This is local ad-hoc development signing, not a notarized public distribution. No icon asset is required. The installer verifies a fresh staged bundle before replacement and waits for normal Rastera quit/recovery flush, preserving projects and preferences.
 
-In **Canvas**, choose **Transform**, **Crop** or **Corner Pin**. Pin image, camera, video/GIF or editable text layers with four labelled handles or visible-corner X/Y controls. Reset Corner Pin preserves crop, ordinary placement and source reference. Selection follows the warped polygon; body dragging moves it; Escape cancels a gesture. Warped crops preserve surviving source positions. Handles/guides are operator-only. Geometry edits reuse prepared resources and shared playback/capture. Projects now use **schema 10**, explicitly migrating versions 1–9 and older recovery journals to identity pins.
+In **Canvas**, choose **Transform**, **Crop** or **Corner Pin**. Pin image, camera, video/GIF or editable text layers with four labelled handles or visible-corner X/Y controls. Reset Corner Pin preserves crop, ordinary placement and source reference. Selection follows the warped polygon; body dragging moves it; Escape cancels a gesture. Warped crops preserve surviving source positions. Handles/guides are operator-only. Geometry edits reuse prepared resources and shared playback/capture. Corner Pin introduced schema 10; current schema 11 also stores audio and migrates versions 1–10 and older recovery journals.
 
 [Controls, transform conventions, installation and measured verification](docs/source-corner-pin.md) distinguish unit/native/launcher checks from pending human picture/hardware acceptance. Existing pause/capture limitations remain; the broader UI overhaul stays deferred.
 

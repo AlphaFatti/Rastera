@@ -1113,6 +1113,11 @@ impl Editor {
                 ui.strong("Live Edit — changes affect outputs");
                 ui.selectable_value(&mut self.audio.open, true, "Audio Mixer");
                 ui.selectable_value(&mut self.audio.open, false, "Canvas / Viewports");
+                if !self.doc.audio.sources.is_empty() && ui.button("Mute All Audio · ⇧⌘M").clicked()
+                {
+                    self.audio.active = false;
+                    super::audio_native::emergency(true);
+                }
                 if ui
                     .add_enabled(!loading, egui::Button::new("Insert Video / GIF…"))
                     .clicked()
@@ -1159,7 +1164,9 @@ impl Editor {
                         self.pin_error = None;
                     }
                 }
-                ui.add_enabled_ui(!loading, |ui| {
+            });
+            ui.add_enabled_ui(!loading, |ui| {
+                ui.horizontal_wrapped(|ui| {
                     for (label, a) in [
                         ("Import image…", Action::Import),
                         ("Add text", Action::AddText),

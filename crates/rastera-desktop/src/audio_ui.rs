@@ -233,6 +233,7 @@ impl Audio {
                                 source.resume_sample = (seek * 48000.).round() as i64;
                                 if let Err(e)=self.command_source(id,rastera_audio::timing::Command::Seek(source.resume_sample)){self.status.errors.push(e);}
                             }
+                            if ui.button("Stop").clicked(){source.playing=false;source.resume_sample=0;if let Err(e)=self.command_source(id,rastera_audio::timing::Command::Stop){self.status.errors.push(e);}}
                             if ui.button("Restart").clicked() {
                                 source.resume_sample = 0;
                                 source.playing = true;
@@ -240,9 +241,8 @@ impl Audio {
                             }
                         });
                     } else if matches!(source.origin, Origin::Playback(_)) {
-                        ui.label(
-                            "Transport is shared with this video's Play/Pause/Seek/Loop controls.",
-                        );
+                        ui.label("Shared video/audio transport — looping is set on the picture inspector.");
+                        ui.horizontal(|ui|{for(label,command)in[("Play",rastera_audio::timing::Command::Play),("Pause",rastera_audio::timing::Command::Pause),("Stop",rastera_audio::timing::Command::Stop),("Restart",rastera_audio::timing::Command::Restart)]{if ui.button(label).clicked(){if let Err(e)=self.command_source(id,command){self.status.errors.push(e);}}}});
                     }
                     for sid in source.active.clone() {
                         if let Some(st) = source.strips.iter_mut().find(|s| s.id == sid) {

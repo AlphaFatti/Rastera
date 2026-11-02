@@ -20,6 +20,9 @@ pub(super) struct AudioProbe {
     next_report: u64,
     seconds: u64,
     camera: bool,
+    camera_checked: bool,
+    external_uid: Option<String>,
+    speaker_content: u64,
     camera_source: Option<Id>,
 }
 impl AudioProbe {
@@ -46,6 +49,9 @@ impl AudioProbe {
                 })
                 .unwrap_or(600),
             camera: false,
+            camera_checked: false,
+            external_uid: None,
+            speaker_content: 0,
             camera_source: None,
         }
     }
@@ -247,11 +253,8 @@ impl AudioProbe {
                 {
                     return Err("Device callbacks did not contain nonzero mixer content".into());
                 }
-                let c = e
-                    .media
-                    .control(&e.doc, self.movie)
-                    .ok_or("Missing shared video transport")?;
-                c.state.lock().unwrap().playing = false;
+                e.audio
+                    .command_source(self.movie_audio, rastera_audio::timing::Command::Pause)?;
                 self.phase = 4;
                 self.started = Instant::now();
             }
@@ -273,11 +276,12 @@ impl AudioProbe {
                         return Err("Paused video did not silence its mixer inputs".into());
                     }
                 }
-                {
-                    let mut s = c.state.lock().unwrap();
-                    s.seek = Some(1.25);
-                    s.playing = true;
-                }
+                e.audio.command_source(
+                    self.movie_audio,
+                    rastera_audio::timing::Command::Seek(60000),
+                )?;
+                e.audio
+                    .command_source(self.movie_audio, rastera_audio::timing::Command::Play)?;
                 self.phase = 5;
                 self.started = Instant::now();
             }
@@ -382,6 +386,10 @@ impl AudioProbe {
                 if !e.audio.active {
                     return Err("Save As unexpectedly disabled running audio".into());
                 }
+                if !self.camera_checked {
+                    e.capture.refresh();
+                    self.camera_checked = true;
+                }
                 if self.camera_source.is_none() && e.capture.authorization() == 3 {
                     if let Some(device) = e
                         .capture
@@ -482,7 +490,7 @@ impl AudioProbe {
                     if let Some(id) = self.camera_source {
                         self.camera |= e.capture.status(&e.doc, id).frames > 5;
                     }
-                    let record = serde_json::json!({"elapsed_seconds":self.trial.elapsed().as_secs_f64(),"interval_seconds":now.duration_since(self.last_time).as_secs_f64(),"mixed_sample_delta":sample.saturating_sub(self.last_sample),"late_blocks_lifetime":e.audio.status.late_blocks,"device_counters":e.audio.status.stats,"device_details":e.audio.status.details,"source_stats":e.audio.status.source_stats,"source_formats":e.audio.status.source_formats,"input_peak":input,"errors":e.audio.status.errors});
+                    let record = serde_json::json!({"elapsed_seconds":self.trial.elapsed().as_secs_f64(),"interval_seconds":now.duration_since(self.last_time).as_secs_f64(),"mixed_sample_delta":sample.saturating_sub(self.last_sample),"late_blocks_lifetime":e.audio.status.late_blocks,"device_counters":e.audio.status.stats,"device_details":e.audio.status.details,"source_stats":e.audio.status.source_stats,"source_queues":e.audio.status.source_queues,"source_formats":e.audio.status.source_formats,"input_peak":input,"errors":e.audio.status.errors});
                     self.intervals.push(record);
                     self.last_time = now;
                     self.last_sample = sample;
@@ -497,8 +505,96 @@ impl AudioProbe {
                 let result = serde_json::json!({"requested_seconds":self.seconds,"elapsed_seconds":self.trial.elapsed().as_secs_f64(),"capture_input_available":self.mic.is_some(),"camera_frame_delivery_verified":self.camera,"devices":e.audio.status.devices,"intervals":self.intervals,"native_outputs":outputs.len(),"all_buses_mixed":10,"physical_listening":"pending","physical_av_offset_loopback":"unavailable","interpretation":"4-channel track DualStereo→QuadMono→DualStereo, original strip IDs preserved"});
                 std::fs::write(file, serde_json::to_vec_pretty(&result).unwrap())
                     .map_err(|e| e.to_string())?;
-                log("audio_probe passed=1 file_pcm=1 pause_silence=1 seek=1 quad_channels=1 mode_ids=1 layer_dedup=1 scene=1 roundtrip=1 trial_complete=1\n".into());
                 self.phase = 11;
+                self.started = Instant::now();
+                return Ok(false);
+            }
+            11 => {
+                self.external_uid = e.audio.patches.get(&2).map(|p| p.uid.clone());
+                self.speaker_content = e
+                    .audio
+                    .status
+                    .details
+                    .get("BuiltInSpeakerDevice")
+                    .map_or(0, |d| d.content_frames);
+                if let Some(p) = e.audio.patches.get_mut(&2) {
+                    p.uid = "rastera-test-missing-output".into();
+                }
+                self.phase = 12;
+                self.started = Instant::now();
+            }
+            12 => {
+                if self.started.elapsed().as_secs() < 1 {
+                    return Ok(false);
+                }
+                if e.audio
+                    .status
+                    .details
+                    .get("BuiltInSpeakerDevice")
+                    .is_none_or(|d| d.content_frames <= self.speaker_content)
+                {
+                    return Err(
+                        "Unaffected physical output stopped during missing-device test".into(),
+                    );
+                }
+                if self.external_uid.is_some()
+                    && !e
+                        .audio
+                        .status
+                        .errors
+                        .iter()
+                        .any(|s| s.contains("rastera-test-missing-output"))
+                {
+                    return Err("Missing assignment not reported".into());
+                }
+                if let Some(uid) = &self.external_uid {
+                    e.audio.patches.get_mut(&2).unwrap().uid = uid.clone();
+                }
+                self.phase = 13;
+                self.started = Instant::now();
+            }
+            13 => {
+                if self.started.elapsed().as_secs() < 2 {
+                    return Ok(false);
+                }
+                if self
+                    .external_uid
+                    .as_ref()
+                    .is_some_and(|uid| !e.audio.status.stats.contains_key(uid))
+                {
+                    return Err("Reassigned physical output failed to reopen".into());
+                }
+                if let Some(p) = e.audio.patches.get(&1).cloned() {
+                    e.audio.patches.insert(10, p);
+                }
+                self.phase = 14;
+                self.started = Instant::now();
+            }
+            14 => {
+                if self.started.elapsed().as_secs() < 1 {
+                    return Ok(false);
+                }
+                if !e.audio.status.details.contains_key("BuiltInSpeakerDevice") {
+                    return Err("Shared physical patch lost device".into());
+                }
+                e.audio.patches.remove(&10);
+                crate::shared_native::audio_native::mute_probe();
+                self.phase = 15;
+                self.started = Instant::now();
+            }
+            15 => {
+                if self.started.elapsed().as_secs() < 1 {
+                    return Ok(false);
+                }
+                if e.audio.active || !crate::shared_native::audio_native::is_muted() {
+                    return Err("Application-scoped Mute All Audio shortcut failed".into());
+                }
+                if outputs.len() != 2 {
+                    return Err("Mute All Audio disabled video outputs".into());
+                }
+                std::fs::write(self.folder.join("audio-controls-results.json"),serde_json::to_vec_pretty(&serde_json::json!({"missing_assignment_retained":true,"unaffected_device_content_continued":true,"reassignment_reopened":true,"shared_destination_single_device":true,"native_app_shortcut_muted_audio":true,"video_outputs_after_audio_mute":outputs.len()})).unwrap()).map_err(|e|e.to_string())?;
+                log("audio_probe passed=1 file_pcm=1 pause_silence=1 seek=1 quad_channels=1 mode_ids=1 layer_dedup=1 scene=1 roundtrip=1 trial_complete=1 missing_device=1 reassign=1 mute_shortcut=1\n".into());
+                self.phase = 16;
                 return Ok(true);
             }
             _ => return Ok(true),

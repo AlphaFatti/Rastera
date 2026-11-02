@@ -40,6 +40,7 @@ unsafe extern "C" {
     fn rastera_audio_emergency(mute: bool);
     fn rastera_audio_is_muted() -> bool;
     fn rastera_audio_shortcut();
+    fn rastera_audio_mute_probe();
 }
 pub fn host() -> f64 {
     unsafe { rastera_audio_host_time() }
@@ -248,4 +249,8 @@ impl Device {
 #[allow(dead_code)] // Used by the standalone audio-probe executable.
 pub fn resample_measure(rate: f64, hz: f64, impulse: bool) -> Result<serde_json::Value, String> {
     take_json(unsafe { rastera_audio_resample_measure(rate, hz, impulse) })
+}
+
+pub fn mute_probe() {
+    unsafe { rastera_audio_mute_probe() }
 }
