@@ -167,6 +167,7 @@ pub(super) struct Editor {
     session: super::session::Session,
     pub(super) clean_windows: std::collections::BTreeMap<u64, [f64; 4]>,
     restore: Option<rastera_core::recovery::Snapshot>,
+    final_outputs: Option<std::collections::BTreeMap<u64, rastera_core::recovery::Output>>,
     inspector_before: Option<Document>,
     revision: u64,
     files: Files,
@@ -243,6 +244,7 @@ impl Editor {
                 .unwrap_or_default(),
             session,
             restore: restore.clone(),
+            final_outputs: None,
             inspector_before: None,
             revision,
             files: Files::new(),
@@ -1506,6 +1508,31 @@ if ui.button("Restart").clicked(){s.seek=Some(0.);s.playing=true;}let mut pos=s.
         area
     }
 }
+impl Editor {
+    pub(super) fn remember_outputs(&mut self, enabled: &std::collections::BTreeSet<u64>) {
+        self.final_outputs = Some(
+            enabled
+                .iter()
+                .filter(|id| self.doc.viewport(**id).is_some())
+                .map(|id| {
+                    let p = self
+                        .destinations
+                        .preferences
+                        .get(id)
+                        .cloned()
+                        .unwrap_or_default();
+                    (
+                        *id,
+                        rastera_core::recovery::Output {
+                            fullscreen: p.fullscreen,
+                            display: p.display,
+                        },
+                    )
+                })
+                .collect(),
+        );
+    }
+}
 impl Drop for Editor {
     fn drop(&mut self) {
         let mut snapshot =
@@ -1527,6 +1554,9 @@ impl Drop for Editor {
                     machine: self.destinations.discovery.machine.clone(),
                     enabled: Default::default(),
                 });
+        if let Some(enabled) = self.final_outputs.take() {
+            snapshot.enabled = enabled;
+        }
         snapshot.clean_windows = self.clean_windows.clone();
         snapshot.document = self.doc.clone();
         snapshot.saved = self.saved.clone();

@@ -529,6 +529,18 @@ impl eframe::App for App {
 }
 impl Drop for App {
     fn drop(&mut self) {
+        // Capture logical intent and native geometry before retiring consumers. Never infer
+        // remembered activation from the empty consumer map after shutdown.
+        if let Some(editor) = &mut self.editor {
+            editor.remember_outputs(&self.open_outputs);
+            for (&id, out) in &self.outputs {
+                let mut frame = [0.; 4];
+                if unsafe { rastera_recovery_window_frame(out.handle.as_ptr(), frame.as_mut_ptr()) }
+                {
+                    editor.clean_windows.insert(id, frame);
+                }
+            }
+        }
         let _ = self.stop.send(());
         if let Some(m) = self.monitor.take() {
             let _ = m.join();

@@ -189,9 +189,13 @@ impl Destinations {
             .as_ref()
             .is_some_and(|previous| previous.0 != self.discovery.machine);
         self.context_tag = Some(tag);
-        let key = path
-            .filter(|_| !self.discovery.machine.is_empty())
-            .map(|p| namespace(&self.discovery.machine, project, p));
+        let key = (!self.discovery.machine.is_empty()).then(|| {
+            namespace(
+                &self.discovery.machine,
+                project,
+                path.unwrap_or_else(|| Path::new("<unsaved-session>")),
+            )
+        });
         if reopened || machine_changed || self.project != project {
             enabled.clear();
             self.status.clear();
@@ -447,5 +451,30 @@ mod tests {
         assert!(d.error.is_some());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod unsaved_recall_tests {
+    use super::*;
+    #[test]
+    fn unsaved_assignment_is_project_and_machine_scoped() {
+        let p = Path::new("<unsaved-session>");
+        assert_eq!(
+            namespace("mac-a", "project-a", p),
+            namespace("mac-a", "project-a", p)
+        );
+        assert_ne!(
+            namespace("mac-a", "project-a", p),
+            namespace("mac-a", "project-b", p)
+        );
+        assert_ne!(
+            namespace("mac-a", "project-a", p),
+            namespace("mac-b", "project-a", p)
+        );
+        assert_ne!(
+            namespace("mac-a", "project-a", p),
+            namespace("mac-a", "project-a", Path::new("/tmp/project.rastera.json"))
+        );
     }
 }
