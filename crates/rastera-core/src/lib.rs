@@ -120,3 +120,5 @@ pub mod background;
 pub mod scenes;
 
 pub mod recovery;
+
+pub mod pin;

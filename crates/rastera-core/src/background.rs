@@ -67,6 +67,7 @@ impl Background {
         }
         Some(Layer {
             id: 0,
+            pin: crate::pin::Pin::default(),
             name: "Background".into(),
             rect,
             crop,

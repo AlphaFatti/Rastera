@@ -82,6 +82,10 @@ impl Layer {
                 "Reset crop would exceed layer geometry limits; reduce layer size first".into(),
             );
         }
+        let mut next = self.clone();
+        next.rect = rect;
+        next.crop = crop;
+        next.validate_pin()?;
         self.rect = rect;
         self.crop = crop;
         Ok(())

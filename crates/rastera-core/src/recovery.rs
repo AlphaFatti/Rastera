@@ -105,8 +105,16 @@ pub fn read_snapshot(path: &Path) -> Result<Snapshot, String> {
     if std::fs::metadata(path).map_err(|e| e.to_string())?.len() > MAX_BYTES {
         return Err("Recovery exceeds 16 MiB".into());
     }
-    let s: Snapshot = serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let document = crate::scene::decode_document(value["document"].take())?;
+    value["document"] = serde_json::to_value(document).map_err(|e| e.to_string())?;
+    if !value["saved"].is_null() {
+        let saved = crate::scene::decode_document(value["saved"].take())?;
+        value["saved"] = serde_json::to_value(saved).map_err(|e| e.to_string())?;
+    }
+    let s: Snapshot = serde_json::from_value(value).map_err(|e| e.to_string())?;
     s.validate()?;
     Ok(s)
 }
@@ -233,6 +241,21 @@ mod tests {
         assert!(eligible_outputs(&targets, "test", &wrong).is_empty());
         store(&root, &Preferences::default(), &s).unwrap();
         store(&root, &Preferences::default(), &s).unwrap();
+        assert_eq!(load(&root).0, Some(s.clone()));
+        let mut legacy = serde_json::to_value(&s).unwrap();
+        for key in ["document", "saved"] {
+            legacy[key]["version"] = 9.into();
+            for scene in legacy[key]["scenes"].as_array_mut().unwrap() {
+                for layer in scene["layers"].as_array_mut().unwrap() {
+                    layer.as_object_mut().unwrap().remove("pin");
+                }
+            }
+        }
+        std::fs::write(
+            root.join("current.json"),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
         assert_eq!(load(&root).0, Some(s.clone()));
         std::fs::write(root.join("current.json"), b"broken").unwrap();
         let (recovered, warning) = load(&root);

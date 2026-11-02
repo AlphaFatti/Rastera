@@ -35,6 +35,7 @@ struct LiveImage {
 struct Prepared {
     scene_identity: (String, u64),
     restart_cues: Vec<Arc<crate::capture::Slot>>,
+    resource_uploads: u64,
     captures: Vec<LiveImage>,
     revision: u64,
     background: bool,
@@ -61,6 +62,7 @@ struct Shared {
     stop: AtomicBool,
     status: Mutex<Option<PreparationStatus>>,
     captures: Arc<crate::capture::Hub>,
+    resource_uploads: AtomicU64,
 }
 #[derive(Debug)]
 pub struct PreparationStatus {
@@ -113,6 +115,7 @@ impl SceneEngine {
             stop: AtomicBool::new(false),
             status: Mutex::new(None),
             captures: Arc::new(crate::capture::Hub::default()),
+            resource_uploads: AtomicU64::new(0),
         });
         let state = shared.clone();
         let gpu = material.clone();
@@ -213,6 +216,9 @@ impl SceneEngine {
                 });
                 match prepared {
                     Ok(mut scene) => {
+                        state
+                            .resource_uploads
+                            .fetch_add(scene.resource_uploads, Ordering::Relaxed);
                         scene.revision = revision;
                         let scene = Arc::new(scene);
                         retained.push(scene.clone());
@@ -254,6 +260,9 @@ impl SceneEngine {
         *self.shared.request.lock().unwrap() = Some((revision, doc));
         self.shared.wake.notify_one();
         revision
+    }
+    pub fn resource_uploads(&self) -> u64 {
+        self.shared.resource_uploads.load(Ordering::Relaxed)
     }
     pub fn status(&self) -> Option<PreparationStatus> {
         self.shared.status.lock().unwrap().take()
@@ -448,15 +457,18 @@ impl Material {
             ],
         });
         let shader=device.create_shader_module(wgpu::ShaderModuleDescriptor {label:Some("scene compositor"),source:wgpu::ShaderSource::Wgsl(r#"
-struct Layer { rect:vec4f, properties:vec4f, canvas:vec4f, crop:vec4f }
+struct Layer { rect:vec4f, properties:vec4f, canvas:vec4f, crop:vec4f, h0:vec4f, h1:vec4f, h2:vec4f }
 @group(0) @binding(0) var<uniform> layer:Layer;
 @group(0) @binding(1) var bitmap:texture_2d<f32>;
 @group(0) @binding(2) var filtering:sampler;
 struct Vertex {@builtin(position) pos:vec4f,@location(0) uv:vec2f}
 @vertex fn vs(@builtin(vertex_index) i:u32)->Vertex {
     var uv=array<vec2f,6>(vec2f(0,0),vec2f(1,0),vec2f(0,1),vec2f(0,1),vec2f(1,0),vec2f(1,1));
-    let p=layer.rect.xy+uv[i]*layer.rect.zw;
-    return Vertex(vec4f(p.x/layer.canvas.x*2.0-1.0,1.0-p.y/layer.canvas.y*2.0,0,1),layer.crop.xy + uv[i]*layer.properties.yz*layer.crop.zw);
+    let local=layer.crop.xy+uv[i]*layer.crop.zw;
+    let v=vec3f(local,1.0);
+    let h=vec3f(dot(layer.h0.xyz,v),dot(layer.h1.xyz,v),dot(layer.h2.xyz,v));
+    let p=layer.rect.xy*h.z+h.xy*layer.rect.zw;
+    return Vertex(vec4f(p.x/layer.canvas.x*2.0-h.z,h.z-p.y/layer.canvas.y*2.0,0,h.z),local*layer.properties.yz);
 }
 @fragment fn fs(v:Vertex)->@location(0) vec4f {let c=textureSample(bitmap,filtering,v.uv);return c*layer.properties.x;}
 "#.into())});
@@ -570,6 +582,7 @@ fn prepare(
 ) -> Result<Prepared, String> {
     let (fonts, library) = text;
     doc.validate()?;
+    let mut resource_uploads = 0;
     let mut captures = Vec::new();
     let mut capture_ids = HashSet::new();
     let mut layers = vec![];
@@ -704,6 +717,7 @@ fn prepare(
                     None
                 },
             });
+            resource_uploads += 1;
             cache.insert(key.clone(), image.clone());
             image
         };
@@ -735,11 +749,13 @@ fn prepare(
         } else {
             [1., 1.]
         };
+        let full = layer.crop.full_rect(r);
+        let h = layer.pin.homography()?.rows;
         let bytes: Vec<u8> = [
-            r.x,
-            r.y,
-            r.width,
-            r.height,
+            full.x,
+            full.y,
+            full.width,
+            full.height,
             layer.opacity,
             uv[0],
             uv[1],
@@ -752,6 +768,18 @@ fn prepare(
             layer.crop.top,
             layer.crop.right - layer.crop.left,
             layer.crop.bottom - layer.crop.top,
+            h[0][0] as f32,
+            h[0][1] as f32,
+            h[0][2] as f32,
+            0.,
+            h[1][0] as f32,
+            h[1][1] as f32,
+            h[1][2] as f32,
+            0.,
+            h[2][0] as f32,
+            h[2][1] as f32,
+            h[2][2] as f32,
+            0.,
         ]
         .iter()
         .flat_map(|v| v.to_ne_bytes())
@@ -786,6 +814,7 @@ fn prepare(
     }
     cache.retain(|k, _| used.contains(k));
     Ok(Prepared {
+        resource_uploads,
         captures,
         revision: 0,
         scene_identity: (doc.project_id.clone(), doc.active_scene),

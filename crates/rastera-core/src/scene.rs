@@ -64,6 +64,7 @@ pub enum Content {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Layer {
+    pub pin: crate::pin::Pin,
     pub crop: crate::crop::Crop,
     pub id: Id,
     pub name: String,
@@ -101,7 +102,7 @@ fn new_project_id() -> String {
 impl Default for Document {
     fn default() -> Self {
         Self {
-            version: 9,
+            version: 10,
             project_id: new_project_id(),
             canvas: [WIDTH, HEIGHT],
             viewports: crate::mapping::defaults(),
@@ -304,6 +305,7 @@ impl Document {
             opacity: 1.,
             aspect_lock,
             crop: crate::crop::Crop::default(),
+            pin: crate::pin::Pin::default(),
         });
         id
     }
@@ -391,12 +393,12 @@ impl Document {
         self.layers
             .iter()
             .rev()
-            .find(|l| l.visible && !l.locked && l.rect.contains(p))
+            .find(|l| l.visible && !l.locked && l.contains(p))
             .map(|l| l.id)
     }
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != 9 {
-            return Err("Unsupported project version (expected v9)".into());
+        if self.version != 10 {
+            return Err("Unsupported project version (expected v10)".into());
         }
         if self.project_id.len() != 32 || !self.project_id.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("Invalid project identity".into());
@@ -494,6 +496,7 @@ impl Document {
         for l in self.all_layers() {
             let r = l.rect;
             l.crop.validate()?;
+            l.validate_pin()?;
             if matches!(l.content, Content::Text(_)) && l.crop != crate::crop::Crop::default() {
                 return Err("Text cannot be source-cropped".into());
             }
@@ -764,14 +767,8 @@ pub fn save_project(doc: &Document, path: &Path) -> Result<(), String> {
     }
     result
 }
-pub fn load_project(path: &Path) -> Result<Document, String> {
-    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
-    if meta.len() > 8 * 1024 * 1024 {
-        return Err("Project exceeds 8 MiB".into());
-    }
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    let mut value: serde_json::Value =
-        serde_json::from_slice(&bytes).map_err(|e| format!("Invalid project: {e}"))?;
+/// Explicit schema migration, also used by recovery journals; does not resolve media paths.
+pub fn decode_document(mut value: serde_json::Value) -> Result<Document, String> {
     match value.get("version").and_then(|v| v.as_u64()) {
         Some(1) => {
             if value.get("canvas") != Some(&serde_json::json!([3840, 1080])) {
@@ -781,7 +778,7 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
             value["viewports"] = serde_json::to_value(crate::mapping::defaults()).unwrap();
         }
         Some(2) => {}
-        Some(3) | Some(4) | Some(5) | Some(6) | Some(7) | Some(8) | Some(9) => {}
+        Some(3) | Some(4) | Some(5) | Some(6) | Some(7) | Some(8) | Some(9) | Some(10) => {}
         _ => return Err("Unsupported project schema version".into()),
     }
     if value["version"].as_u64().is_some_and(|v| v < 3) {
@@ -843,8 +840,30 @@ pub fn load_project(path: &Path) -> Result<Document, String> {
         object.insert("next_scene_id".into(), 2.into());
         object.insert("version".into(), 9.into());
     }
-    let mut doc: Document = serde_json::from_value(value).map_err(|e| e.to_string())?;
+    if value["version"] == 9 {
+        for scene in value["scenes"].as_array_mut().ok_or("Missing scenes")? {
+            for layer in scene["layers"]
+                .as_array_mut()
+                .ok_or("Missing scene layers")?
+            {
+                layer["pin"] = serde_json::to_value(crate::pin::Pin::default()).unwrap();
+            }
+        }
+        value["version"] = 10.into();
+    }
+    let doc: Document = serde_json::from_value(value).map_err(|e| e.to_string())?;
     doc.validate()?;
+    Ok(doc)
+}
+pub fn load_project(path: &Path) -> Result<Document, String> {
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    if meta.len() > 8 * 1024 * 1024 {
+        return Err("Project exceeds 8 MiB".into());
+    }
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|e| format!("Invalid project: {e}"))?;
+    let mut doc = decode_document(value)?;
     let base = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
